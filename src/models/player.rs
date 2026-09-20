@@ -1154,7 +1154,12 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                 let cacheable_candidates = self
                     .skip_segment_candidates
                     .iter()
-                    .filter(|candidate| candidate.source != SkipSegmentSource::SkipDb)
+                    .filter(|candidate| {
+                        candidate.source != SkipSegmentSource::SkipDb
+                            && self
+                                .skip_segment_sources_loaded
+                                .contains(&candidate.source)
+                    })
                     .cloned()
                     .collect::<Vec<_>>();
                 let cache_effects = if result.is_ok() && !cacheable_candidates.is_empty() {
