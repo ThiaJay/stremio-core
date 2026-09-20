@@ -168,6 +168,7 @@ pub enum Internal {
         Result<Vec<SkipSegmentCandidate>, EnvError>,
     ),
     SkipSegmentsCacheResult(
+        SkipSegmentSource,
         SkipSegmentContext,
         Result<Option<SkipSegmentCacheEntry>, EnvError>,
     ),
