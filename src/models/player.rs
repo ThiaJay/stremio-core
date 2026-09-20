@@ -21,8 +21,8 @@ use crate::runtime::msg::{Action, ActionLoad, ActionPlayer, Event, Internal, Msg
 use crate::runtime::{Effect, EffectFuture, Effects, Env, EnvError, EnvFutureExt, UpdateWithCtx};
 use crate::types::addon::{AggrRequest, Descriptor, ExtraExt, ResourcePath, ResourceRequest};
 use crate::types::api::{
-    fetch_api, APIRequest, APIResult, SeekLog, SeekLogRequest, SkipGapsRequest, SkipGapsResponse,
-    SuccessResponse,
+    fetch_api, APIRequest, APIResult, SeekEvent, SeekLog, SeekLogRequest, SkipGaps,
+    SkipGapsRequest, SkipGapsResponse, SuccessResponse,
 };
 use crate::types::library::{LibraryBucket, LibraryItem};
 use crate::types::player::{
@@ -1601,6 +1601,23 @@ fn calculate_outro(
     (outro > 0 && outro <= library_item.state.duration).then_some(outro)
 }
 
+fn select_intro_seek_event(skip_gaps: &SkipGaps) -> Option<&SeekEvent> {
+    skip_gaps
+        .seek_history
+        .iter()
+        .filter(|seek_event| seek_event.records > 0 && seek_event.to > seek_event.from)
+        .max_by(|left, right| {
+            left.records
+                .cmp(&right.records)
+                .then_with(|| {
+                    left.to
+                        .abs_diff(left.from)
+                        .cmp(&right.to.abs_diff(right.from))
+                })
+                .then_with(|| right.from.cmp(&left.from))
+        })
+}
+
 fn intro_outro_update<E: Env + 'static>(
     intro_outro: &mut Option<IntroOutro>,
     profile: &Profile,
@@ -1666,7 +1683,7 @@ fn intro_outro_update<E: Env + 'static>(
                 let duration_diff_in_secs = (library_item.state.duration.abs_diff(*closest_duration)).div(1000 * 10) / 10;
                 let duration_ration = Ratio::new(library_item.state.duration, *closest_duration);
                 // even though we checked for len() > 0 make sure we don't panic if somebody decides to remove that check!
-                let matched_intro = skip_gaps.seek_history.first().map(|seek_event| {
+                let matched_intro = select_intro_seek_event(skip_gaps).map(|seek_event| {
                     let intro_data = IntroData {
                         from: (duration_ration * seek_event.from).to_integer(),
                         to: (duration_ration * seek_event.to).to_integer(),
@@ -1824,8 +1841,9 @@ mod tests {
     use chrono::Utc;
 
     use crate::{
-        models::player::calculate_outro,
+        models::player::{calculate_outro, select_intro_seek_event},
         types::{
+            api::{SeekEvent, SkipGaps},
             library::{LibraryItem, LibraryItemState},
             resource::PosterShape,
         },
@@ -1876,5 +1894,68 @@ mod tests {
         assert_eq!(calculate_outro(&library_item, 11000, 0), None);
         assert_eq!(calculate_outro(&library_item, 11000, 1000), None);
         assert_eq!(calculate_outro(&library_item, 11000, 32000), None);
+    }
+
+    #[test]
+    fn select_intro_prefers_the_strongest_valid_seek_signal() {
+        let skip_gaps = SkipGaps {
+            seek_history: vec![
+                SeekEvent {
+                    records: 5,
+                    from: 0,
+                    to: 35_000,
+                },
+                SeekEvent {
+                    records: 42,
+                    from: 90_000,
+                    to: 157_000,
+                },
+                SeekEvent {
+                    records: 999,
+                    from: 200_000,
+                    to: 190_000,
+                },
+            ],
+            outro: None,
+        };
+
+        let selected = select_intro_seek_event(&skip_gaps).expect("valid intro seek event");
+        assert_eq!(selected.records, 42);
+        assert_eq!(selected.from, 90_000);
+        assert_eq!(selected.to, 157_000);
+    }
+
+    #[test]
+    fn select_intro_ties_prefer_longer_then_earlier_valid_signal() {
+        let skip_gaps = SkipGaps {
+            seek_history: vec![
+                SeekEvent {
+                    records: 10,
+                    from: 60_000,
+                    to: 110_000,
+                },
+                SeekEvent {
+                    records: 10,
+                    from: 75_000,
+                    to: 140_000,
+                },
+                SeekEvent {
+                    records: 10,
+                    from: 30_000,
+                    to: 95_000,
+                },
+                SeekEvent {
+                    records: 0,
+                    from: 10_000,
+                    to: 90_000,
+                },
+            ],
+            outro: None,
+        };
+
+        let selected = select_intro_seek_event(&skip_gaps).expect("valid intro seek event");
+        assert_eq!(selected.records, 10);
+        assert_eq!(selected.from, 30_000);
+        assert_eq!(selected.to, 95_000);
     }
 }
