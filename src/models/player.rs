@@ -1156,9 +1156,7 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                     .iter()
                     .filter(|candidate| {
                         candidate.source != SkipSegmentSource::SkipDb
-                            && self
-                                .skip_segment_sources_loaded
-                                .contains(&candidate.source)
+                            && self.skip_segment_sources_loaded.contains(&candidate.source)
                     })
                     .cloned()
                     .collect::<Vec<_>>();
