@@ -359,11 +359,15 @@ fn introdb_effect<E: Env + 'static>(context: SkipSegmentContext) -> Option<Effec
     )
 }
 
+fn skipdb_url(context: &SkipSegmentContext) -> Option<Url> {
+    let mut url = provider_url("https://api.skipdb.tv/api/segments", context, "duration")?;
+    url.query_pairs_mut().append_pair("adjust", "conservative");
+    Some(url)
+}
+
 #[cfg(not(test))]
 fn skipdb_effect<E: Env + 'static>(context: SkipSegmentContext) -> Option<Effect> {
-    let mut url = provider_url("https://api.skipdb.tv/api/segments", &context, "duration")?;
-    url.query_pairs_mut()
-        .append_pair("adjust", "conservative");
+    let url = skipdb_url(&context)?;
     let request = Request::builder()
         .method("GET")
         .uri(url.as_str())
@@ -638,8 +642,7 @@ mod tests {
             stream_name_hash: None,
         };
 
-        let url = provider_url("https://api.skipdb.tv/api/segments", &context, "duration")
-            .expect("valid SkipDB URL");
+        let url = skipdb_url(&context).expect("valid SkipDB URL");
         let query = url
             .query_pairs()
             .collect::<std::collections::HashMap<_, _>>();
@@ -648,7 +651,10 @@ mod tests {
             query.get("duration").map(|value| value.as_ref()),
             Some("2820")
         );
-        assert_eq!(query.get("adjust").map(|value| value.as_ref()), None);
+        assert_eq!(
+            query.get("adjust").map(|value| value.as_ref()),
+            Some("conservative")
+        );
     }
 
     #[test]
