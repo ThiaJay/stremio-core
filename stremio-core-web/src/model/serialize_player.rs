@@ -153,8 +153,8 @@ pub fn serialize_player<E: stremio_core::runtime::Env + 'static>(
             .profile
             .auth
             .as_ref()
-            .and_then(|auth| auth.user.premium_expire)
-            .map(|expires| expires > E::now())
+            .and_then(|auth| auth.user.premium_expire.as_ref())
+            .map(|expires| expires > &E::now())
             .unwrap_or(false),
         stream_source_supported: player
             .selected
