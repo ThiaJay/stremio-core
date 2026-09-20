@@ -28,11 +28,11 @@ External evidence only changes the segment kinds it actually supplies. Existing 
 
 ## Cache
 
-Successful cache eligible external candidates are cached locally using IMDb identity, season, episode and exact duration. Cache entries expire after 30 days.
+Successful cache eligible external candidates are cached locally per provider using IMDb identity, season, episode and exact duration. IntroDB and TheIntroDB therefore retain independent outage fallbacks. Cache entries expire after 30 days and a stale entry is deleted when encountered.
 
 SkipDB candidates are explicitly excluded from persistent caching. This keeps the SkipDB integration within its read only usage model instead of using its data to populate a Stremio skip segment database.
 
-Cached data is available as an outage fallback while fresh cache eligible provider reads run independently. A successful fresh result for a provider takes precedence over cached evidence for that provider. Failed fresh reads leave a valid cached fallback available.
+Cached data is available as an outage fallback while fresh cache eligible provider reads run independently. A successful fresh result replaces only that provider's cached evidence. A failed fresh read leaves the other provider's valid cached fallback untouched.
 
 ## Privacy and credentials
 
