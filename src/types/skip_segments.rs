@@ -70,6 +70,7 @@ pub struct SkipSegmentContext {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SkipSegmentCacheEntry {
     pub context: SkipSegmentContext,
+    pub source: SkipSegmentSource,
     pub candidates: Vec<SkipSegmentCandidate>,
     pub cached_at: DateTime<Utc>,
 }
