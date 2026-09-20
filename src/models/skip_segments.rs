@@ -636,12 +636,8 @@ mod tests {
             stream_name_hash: None,
         };
 
-        let url = provider_url(
-            "https://api.skipdb.tv/api/segments",
-            &context,
-            "duration",
-        )
-        .expect("valid SkipDB URL");
+        let url = provider_url("https://api.skipdb.tv/api/segments", &context, "duration")
+            .expect("valid SkipDB URL");
         let query = url
             .query_pairs()
             .collect::<std::collections::HashMap<_, _>>();
@@ -696,8 +692,8 @@ mod tests {
         .expect("valid SkipDB response");
 
         let candidates = skipdb_candidates(&response);
-        let resolved =
-            resolve_skip_segment(SkipSegmentKind::Intro, &candidates).expect("trusted SkipDB intro");
+        let resolved = resolve_skip_segment(SkipSegmentKind::Intro, &candidates)
+            .expect("trusted SkipDB intro");
         assert_eq!(resolved.from_ms, 61_000);
         assert_eq!(resolved.to_ms, 91_000);
     }
