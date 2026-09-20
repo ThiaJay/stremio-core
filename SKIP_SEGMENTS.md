@@ -6,13 +6,13 @@ This branch adds provider neutral skip segment evidence while preserving Stremio
 
 Stremio native Skip Gaps remains unchanged and is only requested when the existing Premium checks pass.
 
-IntroDB is queried anonymously using its public segments API for TV episodes. Requests use IMDb identity plus season and episode only. Its published API terms explicitly permit media player integrations and commercial applications with reasonable API usage. No shared application API key is required for reads.
+SkipDB is the portable external source. Its public read API is browser compatible and is used on every platform. SkipDB data is treated as transient read only evidence and is never written into Stremio's persistent skip segment cache. SkipDB attribution and data licence information are available at https://skipdb.tv and https://skipdb.tv/data.
 
-TheIntroDB is queried anonymously using its public media endpoint. No shared application API key is included or required for reads.
+On non WebAssembly clients, IntroDB and TheIntroDB provide additional independent evidence. They are not called directly from WebAssembly clients because live browser origin testing showed that IntroDB does not allow the Stremio Web origin and TheIntroDB may be blocked by Cloudflare from automated environments.
 
 ## Failure isolation
 
-IntroDB and TheIntroDB are requested independently. Neither provider is awaited before playback continues and failure from one provider does not suppress evidence from another provider or Stremio native Skip Gaps.
+Providers are requested independently. No external provider is awaited before playback continues and failure from one provider does not suppress evidence from another provider or Stremio native Skip Gaps.
 
 Every provider result carries the playback context that initiated it. Results for an earlier episode or duration are discarded after playback moves on.
 
@@ -22,19 +22,26 @@ Provider responses are converted into a common candidate model before entering t
 
 The resolver fails closed. Weak standalone external evidence is not exposed. Independent sources can establish a segment when they materially agree. Trusted peers at the same evidence level suppress the result when their timings materially conflict. Invalid ranges, tiny segments and implausibly long intro ranges are rejected.
 
+SkipDB results reported as out of range or otherwise non exact are treated as estimated evidence. They do not establish a skip segment on their own at low confidence.
+
 External evidence only changes the segment kinds it actually supplies. Existing native intro or outro values are preserved when external providers have no trusted candidate for that kind.
 
 ## Cache
 
-Successful external candidates are cached locally using IMDb identity, season, episode and exact duration. Cache entries expire after 30 days.
+Successful cache eligible external candidates are cached locally using IMDb identity, season, episode and exact duration. Cache entries expire after 30 days.
 
-Cached data is available as an outage fallback while fresh provider reads run independently. A successful fresh result for a provider takes precedence over cached evidence for that provider. Failed fresh reads leave a valid cached fallback available.
+SkipDB candidates are explicitly excluded from persistent caching. This keeps the SkipDB integration within its read only usage model instead of using its data to populate a Stremio skip segment database.
+
+Cached data is available as an outage fallback while fresh cache eligible provider reads run independently. A successful fresh result for a provider takes precedence over cached evidence for that provider. Failed fresh reads leave a valid cached fallback available.
 
 ## Privacy and credentials
 
-The integration sends only public media identifiers and the minimum episode or duration information required by each provider. It does not send Stremio authentication material to either external provider and does not embed shared provider API keys.
+The integration sends only public media identifiers and the minimum episode or duration information required by each provider. It does not send Stremio authentication material to external providers and does not embed shared provider API keys.
 
+## Platform behaviour
 
-## Provider selection
+WebAssembly clients use SkipDB directly because its read API returns permissive CORS headers for the Stremio Web origin.
 
-An earlier implementation considered SkipDB as one of the independent sources. The integration now uses IntroDB and TheIntroDB instead. This preserves independent redundancy while avoiding the additional ODbL service provider reciprocity obligations attached to SkipDB data. Stremio native Skip Gaps remains a third source when the existing Premium entitlement permits it.
+Native clients use SkipDB plus IntroDB and TheIntroDB. Stremio native Skip Gaps remains an additional source whenever the existing Premium entitlement permits it.
+
+This keeps the feature available across Stremio clients without relying on an operating system specific helper or weakening the existing Premium boundary.
