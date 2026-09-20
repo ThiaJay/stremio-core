@@ -17,6 +17,10 @@ use crate::models::common::{
     ResourcesAction,
 };
 use crate::models::ctx::{Ctx, CtxError};
+use crate::models::skip_segments::{
+    external_provider_effects, resolve_skip_segment, stremio_native_candidates,
+    strongest_seek_event,
+};
 use crate::runtime::msg::{Action, ActionLoad, ActionPlayer, Event, Internal, Msg};
 use crate::runtime::{Effect, EffectFuture, Effects, Env, EnvError, EnvFutureExt, UpdateWithCtx};
 use crate::types::addon::{AggrRequest, Descriptor, ExtraExt, ResourcePath, ResourceRequest};
@@ -32,6 +36,10 @@ use crate::types::profile::{AuthKey, Profile};
 use crate::types::rating::{Rating, RatingSendRequest, RatingSendResponse};
 use crate::types::resource::{
     MetaItem, SeriesInfo, Stream, StreamSource, StreamUrls, Subtitles, Video,
+};
+use crate::types::skip_segments::{
+    SkipSegmentCacheEntry, SkipSegmentCandidate, SkipSegmentContext, SkipSegmentKind,
+    SkipSegmentSource,
 };
 use crate::types::streams::{
     ConvertedStreamSource, StreamItemState, StreamsBucket, StreamsItemKey,
@@ -148,6 +156,12 @@ pub struct Player {
     pub seek_history: Vec<SeekLog>,
     #[serde(skip_serializing)]
     pub skip_gaps: Option<(SkipGapsRequest, Loadable<SkipGapsResponse, CtxError>)>,
+    #[serde(skip_serializing)]
+    pub skip_segment_context: Option<SkipSegmentContext>,
+    #[serde(skip_serializing)]
+    pub skip_segment_candidates: Vec<SkipSegmentCandidate>,
+    #[serde(skip_serializing)]
+    pub skip_segment_sources_loaded: Vec<SkipSegmentSource>,
     /// Enable or disable Seek log collection.
     ///
     /// Default: `false` (Do not collect)
@@ -318,6 +332,13 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                     self.library_item.as_ref(),
                     &mut self.skip_gaps,
                 );
+                let external_skip_effects = external_skip_segments_update::<E>(
+                    &mut self.skip_segment_context,
+                    &mut self.skip_segment_candidates,
+                    &mut self.skip_segment_sources_loaded,
+                    self.library_item.as_ref(),
+                    self.series_info.as_ref(),
+                );
 
                 // dismiss LibraryItem notification if we have a LibraryItem to begin with
                 let notification_effects = match &self.library_item {
@@ -377,6 +398,7 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                     .join(watched_effects)
                     .join(skip_gaps_effects)
                     .join(intro_outro_update_effects)
+                    .join(external_skip_effects)
                     .join(notification_effects)
             }
             Msg::Action(Action::Unload) => {
@@ -438,6 +460,11 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                 let library_item_effects = eq_update(&mut self.library_item, None);
                 let watched_effects = eq_update(&mut self.watched, None);
                 let skip_gaps_effects = eq_update(&mut self.skip_gaps, None);
+                let skip_segment_context_effects = eq_update(&mut self.skip_segment_context, None);
+                let skip_segment_candidates_effects =
+                    eq_update(&mut self.skip_segment_candidates, vec![]);
+                let skip_segment_sources_loaded_effects =
+                    eq_update(&mut self.skip_segment_sources_loaded, vec![]);
                 self.analytics_context = None;
                 self.load_time = None;
                 self.loaded = false;
@@ -466,6 +493,9 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                     .join(library_item_effects)
                     .join(watched_effects)
                     .join(skip_gaps_effects)
+                    .join(skip_segment_context_effects)
+                    .join(skip_segment_candidates_effects)
+                    .join(skip_segment_sources_loaded_effects)
                     .join(ended_effects)
             }
             Msg::Action(Action::Player(ActionPlayer::VideoParamsChanged { video_params })) => {
@@ -598,10 +628,18 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                         Some(library_item),
                         &mut self.skip_gaps,
                     );
+                    let external_skip_effects = external_skip_segments_update::<E>(
+                        &mut self.skip_segment_context,
+                        &mut self.skip_segment_candidates,
+                        &mut self.skip_segment_sources_loaded,
+                        Some(library_item),
+                        self.series_info.as_ref(),
+                    );
 
                     trakt_event_effects
                         .join(push_to_library_effects)
                         .join(intro_outro_effects)
+                        .join(external_skip_effects)
                 }
                 _ => Effects::none().unchanged(),
             },
@@ -734,10 +772,18 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                         Some(library_item),
                         &mut self.skip_gaps,
                     );
+                    let external_skip_effects = external_skip_segments_update::<E>(
+                        &mut self.skip_segment_context,
+                        &mut self.skip_segment_candidates,
+                        &mut self.skip_segment_sources_loaded,
+                        Some(library_item),
+                        self.series_info.as_ref(),
+                    );
 
                     send_watched_effects
                         .join(push_to_library_effects)
                         .join(intro_outro_effects)
+                        .join(external_skip_effects)
                 }
                 _ => Effects::none().unchanged(),
             },
@@ -1074,9 +1120,84 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                     self.library_item.as_ref(),
                     &mut self.skip_gaps,
                 );
+                let resolved_effects = apply_resolved_skip_segments(
+                    &mut self.intro_outro,
+                    &self.skip_gaps,
+                    self.library_item.as_ref(),
+                    &self.skip_segment_candidates,
+                );
 
-                skip_gaps_effects.join(intro_outro_effects)
+                skip_gaps_effects
+                    .join(intro_outro_effects)
+                    .join(resolved_effects)
             }
+            Msg::Internal(Internal::SkipSegmentsResult(source, context, result)) => {
+                if self.skip_segment_context.as_ref() != Some(context) {
+                    return Effects::none().unchanged();
+                }
+
+                if let Ok(candidates) = result {
+                    self.skip_segment_candidates
+                        .retain(|candidate| candidate.source != *source);
+                    self.skip_segment_candidates.extend(candidates.clone());
+                    if !self.skip_segment_sources_loaded.contains(source) {
+                        self.skip_segment_sources_loaded.push(*source);
+                    }
+                }
+
+                let resolved_effects = apply_resolved_skip_segments(
+                    &mut self.intro_outro,
+                    &self.skip_gaps,
+                    self.library_item.as_ref(),
+                    &self.skip_segment_candidates,
+                );
+                let cache_effects = if result.is_ok() {
+                    Effects::one(skip_segment_cache_write_effect::<E>(
+                        context.clone(),
+                        self.skip_segment_candidates.clone(),
+                    ))
+                    .unchanged()
+                } else {
+                    Effects::none().unchanged()
+                };
+
+                resolved_effects.join(cache_effects)
+            }
+            Msg::Internal(Internal::SkipSegmentsCacheResult(context, result)) => {
+                if self.skip_segment_context.as_ref() != Some(context) {
+                    return Effects::none().unchanged();
+                }
+
+                let Some(entry) = result.as_ref().ok().and_then(|entry| entry.as_ref()) else {
+                    return Effects::none().unchanged();
+                };
+                if entry.context != *context
+                    || E::now().signed_duration_since(entry.cached_at) > Duration::days(30)
+                {
+                    return Effects::none().unchanged();
+                }
+
+                for cached in &entry.candidates {
+                    if !self.skip_segment_sources_loaded.contains(&cached.source)
+                        && !self.skip_segment_candidates.iter().any(|candidate| {
+                            candidate.source == cached.source
+                                && candidate.kind == cached.kind
+                                && candidate.start_ms == cached.start_ms
+                                && candidate.end_ms == cached.end_ms
+                        })
+                    {
+                        self.skip_segment_candidates.push(cached.clone());
+                    }
+                }
+
+                apply_resolved_skip_segments(
+                    &mut self.intro_outro,
+                    &self.skip_gaps,
+                    self.library_item.as_ref(),
+                    &self.skip_segment_candidates,
+                )
+            }
+            Msg::Internal(Internal::SkipSegmentsCacheWriteResult(_)) => Effects::none().unchanged(),
             Msg::Internal(Internal::ProfileChanged) => {
                 if let Some(analytics_context) = &mut self.analytics_context {
                     analytics_context.has_trakt = ctx.profile.has_trakt::<E>();
@@ -1674,6 +1795,157 @@ fn calculate_outro(
     (outro > 0 && outro <= library_item.state.duration).then_some(outro)
 }
 
+fn skip_segment_context(
+    library_item: Option<&LibraryItem>,
+    series_info: Option<&SeriesInfo>,
+) -> Option<SkipSegmentContext> {
+    let library_item = library_item?;
+    if !library_item.id.starts_with("tt") || library_item.state.duration == 0 {
+        return None;
+    }
+
+    Some(SkipSegmentContext {
+        item_id: library_item.id.clone(),
+        media_type: library_item.r#type.clone(),
+        season: series_info.map(|info| info.season),
+        episode: series_info.map(|info| info.episode),
+        duration_ms: Some(library_item.state.duration),
+        open_subtitles_hash: None,
+        stream_name_hash: None,
+    })
+}
+
+fn skip_segment_cache_key(context: &SkipSegmentContext) -> String {
+    format!(
+        "skipSegments:{}:{}:{}:{}",
+        context.item_id,
+        context
+            .season
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "_".to_owned()),
+        context
+            .episode
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "_".to_owned()),
+        context
+            .duration_ms
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "_".to_owned())
+    )
+}
+
+fn skip_segment_cache_load_effect<E: Env + 'static>(context: SkipSegmentContext) -> Effect {
+    let key = skip_segment_cache_key(&context);
+    let result_context = context.clone();
+
+    EffectFuture::Concurrent(
+        E::get_storage::<SkipSegmentCacheEntry>(&key)
+            .map(move |result| {
+                Msg::Internal(Internal::SkipSegmentsCacheResult(result_context, result))
+            })
+            .boxed_env(),
+    )
+    .into()
+}
+
+fn skip_segment_cache_write_effect<E: Env + 'static>(
+    context: SkipSegmentContext,
+    candidates: Vec<SkipSegmentCandidate>,
+) -> Effect {
+    let key = skip_segment_cache_key(&context);
+    let entry = SkipSegmentCacheEntry {
+        context,
+        candidates,
+        cached_at: E::now(),
+    };
+
+    EffectFuture::Concurrent(
+        E::set_storage(&key, Some(&entry))
+            .map(|result| Msg::Internal(Internal::SkipSegmentsCacheWriteResult(result)))
+            .boxed_env(),
+    )
+    .into()
+}
+
+fn external_skip_segments_update<E: Env + 'static>(
+    context_state: &mut Option<SkipSegmentContext>,
+    candidates: &mut Vec<SkipSegmentCandidate>,
+    loaded_sources: &mut Vec<SkipSegmentSource>,
+    library_item: Option<&LibraryItem>,
+    series_info: Option<&SeriesInfo>,
+) -> Effects {
+    let next_context = skip_segment_context(library_item, series_info);
+    if context_state == &next_context {
+        return Effects::none().unchanged();
+    }
+
+    *context_state = next_context.clone();
+    candidates.clear();
+    loaded_sources.clear();
+
+    match next_context {
+        Some(context) => {
+            let mut effects = external_provider_effects::<E>(context.clone());
+            effects.push(skip_segment_cache_load_effect::<E>(context));
+            Effects::many(effects)
+        }
+        None => Effects::none(),
+    }
+}
+
+fn apply_resolved_skip_segments(
+    intro_outro: &mut Option<IntroOutro>,
+    skip_gaps: &Option<(SkipGapsRequest, Loadable<SkipGapsResponse, CtxError>)>,
+    library_item: Option<&LibraryItem>,
+    external_candidates: &[SkipSegmentCandidate],
+) -> Effects {
+    let Some(library_item) = library_item else {
+        return Effects::none().unchanged();
+    };
+    if library_item.state.duration == 0 || external_candidates.is_empty() {
+        return Effects::none().unchanged();
+    }
+
+    let has_external_intro =
+        resolve_skip_segment(SkipSegmentKind::Intro, external_candidates).is_some();
+    let has_external_outro =
+        resolve_skip_segment(SkipSegmentKind::Outro, external_candidates).is_some();
+    if !has_external_intro && !has_external_outro {
+        return Effects::none().unchanged();
+    }
+
+    let mut candidates = external_candidates.to_vec();
+    if let Some((_, Loadable::Ready(response))) = skip_gaps {
+        candidates.extend(stremio_native_candidates(
+            response,
+            library_item.state.duration,
+        ));
+    }
+
+    let current = intro_outro.clone().unwrap_or(IntroOutro {
+        intro: None,
+        outro: None,
+    });
+    let intro = if has_external_intro {
+        resolve_skip_segment(SkipSegmentKind::Intro, &candidates).map(|segment| IntroData {
+            from: segment.from_ms,
+            to: segment.to_ms,
+            duration: segment
+                .adjusted
+                .then_some(segment.to_ms.abs_diff(segment.from_ms)),
+        })
+    } else {
+        current.intro
+    };
+    let outro = if has_external_outro {
+        resolve_skip_segment(SkipSegmentKind::Outro, &candidates).map(|segment| segment.from_ms)
+    } else {
+        current.outro
+    };
+
+    eq_update(intro_outro, Some(IntroOutro { intro, outro }))
+}
+
 fn intro_outro_update<E: Env + 'static>(
     intro_outro: &mut Option<IntroOutro>,
     profile: &Profile,
@@ -1739,7 +2011,7 @@ fn intro_outro_update<E: Env + 'static>(
                 let duration_diff_in_secs = (library_item.state.duration.abs_diff(*closest_duration)).div(1000 * 10) / 10;
                 let duration_ration = Ratio::new(library_item.state.duration, *closest_duration);
                 // even though we checked for len() > 0 make sure we don't panic if somebody decides to remove that check!
-                let matched_intro = skip_gaps.seek_history.first().map(|seek_event| {
+                let matched_intro = strongest_seek_event(skip_gaps).map(|seek_event| {
                     let intro_data = IntroData {
                         from: (duration_ration * seek_event.from).to_integer(),
                         to: (duration_ration * seek_event.to).to_integer(),
