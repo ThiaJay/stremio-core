@@ -1364,7 +1364,13 @@ fn next_stream_update(
         ) => streams
             .iter()
             .find(|next_stream| next_stream.is_binge_match(stream))
-            .cloned(),
+            .cloned()
+            .or_else(|| match streams.as_slice() {
+                // A single stream returned by the same addon is unambiguous even when
+                // the addon does not provide a bingeGroup hint.
+                [only_stream] => Some(only_stream.clone()),
+                _ => None,
+            }),
         _ => None,
     };
 
@@ -1897,12 +1903,91 @@ mod tests {
     use chrono::Utc;
 
     use crate::{
-        models::player::calculate_outro,
+        models::{
+            common::{Loadable, ResourceLoadable},
+            player::{calculate_outro, next_stream_update, Selected},
+        },
         types::{
+            addon::{ResourcePath, ResourceRequest},
             library::{LibraryItem, LibraryItemState},
-            resource::PosterShape,
+            resource::{PosterShape, Stream, StreamBehaviorHints, StreamSource},
         },
     };
+
+    fn test_stream(url: &str, binge_group: Option<&str>) -> Stream {
+        Stream {
+            source: StreamSource::Url {
+                url: url.parse().unwrap(),
+            },
+            name: None,
+            description: None,
+            thumbnail: None,
+            subtitles: vec![],
+            behavior_hints: StreamBehaviorHints {
+                binge_group: binge_group.map(str::to_owned),
+                ..Default::default()
+            },
+        }
+    }
+
+    fn ready_next_streams(streams: Vec<Stream>) -> ResourceLoadable<Vec<Stream>> {
+        ResourceLoadable {
+            request: ResourceRequest {
+                base: "https://transport_url/manifest.json".parse().unwrap(),
+                path: ResourcePath {
+                    resource: "stream".to_owned(),
+                    r#type: "series".to_owned(),
+                    id: "tt123456:1:2".to_owned(),
+                    extra: vec![],
+                },
+            },
+            content: Some(Loadable::Ready(streams)),
+        }
+    }
+
+    fn selected_with_stream(stream: Stream) -> Option<Selected> {
+        Some(Selected {
+            stream,
+            stream_request: None,
+            meta_request: None,
+            subtitles_path: None,
+        })
+    }
+
+    #[test]
+    fn next_stream_uses_single_unambiguous_stream_without_binge_group() {
+        let current_stream = test_stream("https://current.example/video", None);
+        let only_next_stream = test_stream("https://next.example/video", None);
+        let selected = selected_with_stream(current_stream);
+        let next_streams = Some(ready_next_streams(vec![only_next_stream.clone()]));
+        let mut next_stream = None;
+
+        next_stream_update(&mut next_stream, &next_streams, &selected);
+
+        assert_eq!(
+            next_stream,
+            Some(only_next_stream),
+            "the only next stream should be selected when there is no bingeGroup hint"
+        );
+    }
+
+    #[test]
+    fn next_stream_does_not_guess_between_multiple_unmatched_streams() {
+        let current_stream = test_stream("https://current.example/video", None);
+        let selected = selected_with_stream(current_stream);
+        let next_streams = Some(ready_next_streams(vec![
+            test_stream("https://next-a.example/video", Some("other-a")),
+            test_stream("https://next-b.example/video", Some("other-b")),
+        ]));
+        let mut next_stream = None;
+
+        next_stream_update(&mut next_stream, &next_streams, &selected);
+
+        assert_eq!(
+            next_stream, None,
+            "multiple unmatched next streams must still require an explicit user choice"
+        );
+    }
 
     #[test]
     fn test_calculate_outro() {
