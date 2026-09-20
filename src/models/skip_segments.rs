@@ -361,7 +361,9 @@ fn introdb_effect<E: Env + 'static>(context: SkipSegmentContext) -> Option<Effec
 
 #[cfg(not(test))]
 fn skipdb_effect<E: Env + 'static>(context: SkipSegmentContext) -> Option<Effect> {
-    let url = provider_url("https://api.skipdb.tv/api/segments", &context, "duration")?;
+    let mut url = provider_url("https://api.skipdb.tv/api/segments", &context, "duration")?;
+    url.query_pairs_mut()
+        .append_pair("adjust", "conservative");
     let request = Request::builder()
         .method("GET")
         .uri(url.as_str())
@@ -646,6 +648,7 @@ mod tests {
             query.get("duration").map(|value| value.as_ref()),
             Some("2820")
         );
+        assert_eq!(query.get("adjust").map(|value| value.as_ref()), None);
     }
 
     #[test]
