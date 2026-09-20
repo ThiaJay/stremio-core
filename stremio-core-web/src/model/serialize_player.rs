@@ -159,11 +159,13 @@ pub fn serialize_player<E: stremio_core::runtime::Env + 'static>(
         stream_source_supported: player
             .selected
             .as_ref()
-            .map(|selected| matches!(
-                selected.stream.source,
-                stremio_core::types::resource::StreamSource::Url { .. }
-                    | stremio_core::types::resource::StreamSource::Torrent { .. }
-            ))
+            .map(|selected| {
+                matches!(
+                    selected.stream.source,
+                    stremio_core::types::resource::StreamSource::Url { .. }
+                        | stremio_core::types::resource::StreamSource::Torrent { .. }
+                )
+            })
             .unwrap_or(false),
         has_stream_name: player
             .selected
