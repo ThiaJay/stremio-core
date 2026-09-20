@@ -105,6 +105,21 @@ mod model {
     }
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
+    pub struct SkipIntroDebug {
+        pub authenticated: bool,
+        pub premium_active: bool,
+        pub stream_source_supported: bool,
+        pub has_stream_name: bool,
+        pub has_video_params: bool,
+        pub has_os_hash: bool,
+        pub has_series_info: bool,
+        pub has_library_item: bool,
+        pub skip_gaps_state: &'static str,
+        pub intro_selected: bool,
+    }
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
     pub struct Player<'a> {
         pub selected: Option<Selected<'a>>,
         pub stream: Option<Loadable<Stream<ConvertedStreamSource>, &'a EnvError>>,
@@ -120,6 +135,7 @@ mod model {
         pub video_scale: Option<&'a VideoScale>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub intro_outro: Option<&'a stremio_core::types::player::IntroOutro>,
+        pub debug_skip_intro: SkipIntroDebug,
         pub title: Option<String>,
         pub addon: Option<model::DescriptorPreview<'a>>,
     }
@@ -131,6 +147,50 @@ pub fn serialize_player<E: stremio_core::runtime::Env + 'static>(
     ctx: &Ctx,
     streaming_server: &StreamingServer,
 ) -> JsValue {
+    let debug_skip_intro = model::SkipIntroDebug {
+        authenticated: ctx.profile.auth.is_some(),
+        premium_active: ctx
+            .profile
+            .auth
+            .as_ref()
+            .and_then(|auth| auth.user.premium_expire)
+            .map(|expires| expires > E::now())
+            .unwrap_or(false),
+        stream_source_supported: player
+            .selected
+            .as_ref()
+            .map(|selected| matches!(
+                selected.stream.source,
+                stremio_core::types::resource::StreamSource::Url { .. }
+                    | stremio_core::types::resource::StreamSource::Torrent { .. }
+            ))
+            .unwrap_or(false),
+        has_stream_name: player
+            .selected
+            .as_ref()
+            .and_then(|selected| selected.stream.name.as_ref())
+            .is_some(),
+        has_video_params: player.video_params.is_some(),
+        has_os_hash: player
+            .video_params
+            .as_ref()
+            .and_then(|params| params.hash.as_ref())
+            .is_some(),
+        has_series_info: player.series_info.is_some(),
+        has_library_item: player.library_item.is_some(),
+        skip_gaps_state: match &player.skip_gaps {
+            None => "none",
+            Some((_, Loadable::Loading)) => "loading",
+            Some((_, Loadable::Ready(_))) => "ready",
+            Some((_, Loadable::Err(_))) => "error",
+        },
+        intro_selected: player
+            .intro_outro
+            .as_ref()
+            .and_then(|intro_outro| intro_outro.intro.as_ref())
+            .is_some(),
+    };
+
     <JsValue as JsValueSerdeExt>::from_serde(&model::Player {
         live: &player.live,
         selected: player.selected.as_ref().map(|selected| model::Selected {
@@ -338,6 +398,7 @@ pub fn serialize_player<E: stremio_core::runtime::Env + 'static>(
         subtitle_preference: player.subtitle_preference.as_ref(),
         video_scale: player.video_scale.as_ref(),
         intro_outro: player.intro_outro.as_ref(),
+        debug_skip_intro,
         title: player.selected.as_ref().and_then(|selected| {
             player
                 .meta_item
