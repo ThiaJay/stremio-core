@@ -1151,10 +1151,16 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                     self.library_item.as_ref(),
                     &self.skip_segment_candidates,
                 );
-                let cache_effects = if result.is_ok() {
+                let cacheable_candidates = self
+                    .skip_segment_candidates
+                    .iter()
+                    .filter(|candidate| candidate.source != SkipSegmentSource::SkipDb)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                let cache_effects = if result.is_ok() && !cacheable_candidates.is_empty() {
                     Effects::one(skip_segment_cache_write_effect::<E>(
                         context.clone(),
-                        self.skip_segment_candidates.clone(),
+                        cacheable_candidates,
                     ))
                     .unchanged()
                 } else {
@@ -1178,7 +1184,8 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                 }
 
                 for cached in &entry.candidates {
-                    if !self.skip_segment_sources_loaded.contains(&cached.source)
+                    if cached.source != SkipSegmentSource::SkipDb
+                        && !self.skip_segment_sources_loaded.contains(&cached.source)
                         && !self.skip_segment_candidates.iter().any(|candidate| {
                             candidate.source == cached.source
                                 && candidate.kind == cached.kind
