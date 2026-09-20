@@ -13,6 +13,7 @@ pub enum SkipSegmentKind {
 pub enum SkipSegmentSource {
     StremioNative,
     IntroDb,
+    SkipDb,
     TheIntroDb,
 }
 
