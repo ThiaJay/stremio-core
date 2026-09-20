@@ -163,6 +163,68 @@ fn introdb_candidates(
 }
 
 #[derive(Clone, Debug, Deserialize)]
+struct SkipDbResponse {
+    pub segments: SkipDbSegments,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct SkipDbSegments {
+    #[serde(default)]
+    pub intro: Option<SkipDbSegment>,
+    #[serde(default)]
+    pub recap: Option<SkipDbSegment>,
+    #[serde(default)]
+    pub outro: Option<SkipDbSegment>,
+    #[serde(default)]
+    pub preview: Option<SkipDbSegment>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct SkipDbSegment {
+    pub start_ms: u64,
+    pub end_ms: u64,
+    #[serde(default)]
+    pub adjusted: bool,
+    #[serde(default)]
+    pub confidence: Option<f64>,
+    #[serde(rename = "match")]
+    pub match_kind: String,
+}
+
+fn skipdb_candidates(response: &SkipDbResponse) -> Vec<SkipSegmentCandidate> {
+    [
+        (SkipSegmentKind::Intro, response.segments.intro.as_ref()),
+        (SkipSegmentKind::Recap, response.segments.recap.as_ref()),
+        (SkipSegmentKind::Outro, response.segments.outro.as_ref()),
+        (SkipSegmentKind::Preview, response.segments.preview.as_ref()),
+    ]
+    .into_iter()
+    .filter_map(|(kind, segment)| {
+        let segment = segment?;
+        (segment.end_ms > segment.start_ms).then_some(SkipSegmentCandidate {
+            kind,
+            start_ms: segment.start_ms,
+            end_ms: segment.end_ms,
+            source: SkipSegmentSource::SkipDb,
+            source_match: match segment.match_kind.as_str() {
+                "exact" => SkipSegmentMatch::ExactStream,
+                "shifted" => SkipSegmentMatch::DurationAdjusted,
+                _ => SkipSegmentMatch::Estimated,
+            },
+            source_confidence: segment.confidence,
+            adjusted: segment.adjusted,
+            evidence_count: 0,
+            stream_specificity: if matches!(segment.match_kind.as_str(), "exact" | "shifted") {
+                SkipSegmentStreamSpecificity::Duration
+            } else {
+                SkipSegmentStreamSpecificity::Episode
+            },
+        })
+    })
+    .collect()
+}
+
+#[derive(Clone, Debug, Deserialize)]
 pub(crate) struct TheIntroDbResponse {
     #[serde(default)]
     pub intro: Vec<TheIntroDbSegment>,
@@ -257,7 +319,7 @@ fn provider_url(base: &str, context: &SkipSegmentContext, duration_param: &str) 
     Some(url)
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), not(target_arch = "wasm32")))]
 fn introdb_effect<E: Env + 'static>(context: SkipSegmentContext) -> Option<Effect> {
     let season = context.season?;
     let episode = context.episode?;
@@ -298,6 +360,32 @@ fn introdb_effect<E: Env + 'static>(context: SkipSegmentContext) -> Option<Effec
 }
 
 #[cfg(not(test))]
+fn skipdb_effect<E: Env + 'static>(context: SkipSegmentContext) -> Option<Effect> {
+    let url = provider_url("https://api.skipdb.tv/api/segments", &context, "duration")?;
+    let request = Request::builder()
+        .method("GET")
+        .uri(url.as_str())
+        .body(())
+        .expect("skipdb request builder failed");
+    let result_context = context.clone();
+
+    Some(
+        EffectFuture::Concurrent(
+            E::fetch::<_, SkipDbResponse>(request)
+                .map(move |result| {
+                    Msg::Internal(Internal::SkipSegmentsResult(
+                        SkipSegmentSource::SkipDb,
+                        result_context,
+                        result.map(|response| skipdb_candidates(&response)),
+                    ))
+                })
+                .boxed_env(),
+        )
+        .into(),
+    )
+}
+
+#[cfg(all(not(test), not(target_arch = "wasm32")))]
 fn theintrodb_effect<E: Env + 'static>(context: SkipSegmentContext) -> Option<Effect> {
     if !is_theintrodb_imdb_id(&context.item_id) {
         return None;
@@ -332,15 +420,21 @@ fn theintrodb_effect<E: Env + 'static>(context: SkipSegmentContext) -> Option<Ef
     )
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), not(target_arch = "wasm32")))]
 pub fn external_provider_effects<E: Env + 'static>(context: SkipSegmentContext) -> Vec<Effect> {
     [
+        skipdb_effect::<E>(context.clone()),
         introdb_effect::<E>(context.clone()),
         theintrodb_effect::<E>(context),
     ]
     .into_iter()
     .flatten()
     .collect()
+}
+
+#[cfg(all(not(test), target_arch = "wasm32"))]
+pub fn external_provider_effects<E: Env + 'static>(context: SkipSegmentContext) -> Vec<Effect> {
+    skipdb_effect::<E>(context).into_iter().collect()
 }
 
 #[cfg(test)]
@@ -479,8 +573,9 @@ pub fn resolve_skip_segment(
 
     provenance.sort_by_key(|source| match source {
         SkipSegmentSource::StremioNative => 0,
-        SkipSegmentSource::IntroDb => 1,
-        SkipSegmentSource::TheIntroDb => 2,
+        SkipSegmentSource::SkipDb => 1,
+        SkipSegmentSource::IntroDb => 2,
+        SkipSegmentSource::TheIntroDb => 3,
     });
     provenance.dedup();
 
@@ -527,6 +622,84 @@ mod tests {
             evidence_count,
             stream_specificity: specificity,
         }
+    }
+
+    #[test]
+    fn skipdb_provider_url_uses_duration_seconds() {
+        let context = SkipSegmentContext {
+            item_id: "tt0903747".into(),
+            media_type: "series".into(),
+            season: Some(1),
+            episode: Some(2),
+            duration_ms: Some(2_820_500),
+            open_subtitles_hash: None,
+            stream_name_hash: None,
+        };
+
+        let url = provider_url(
+            "https://api.skipdb.tv/api/segments",
+            &context,
+            "duration",
+        )
+        .expect("valid SkipDB URL");
+        let query = url
+            .query_pairs()
+            .collect::<std::collections::HashMap<_, _>>();
+
+        assert_eq!(
+            query.get("duration").map(|value| value.as_ref()),
+            Some("2820")
+        );
+    }
+
+    #[test]
+    fn skipdb_adapter_fails_closed_for_out_of_range_matches() {
+        let response: SkipDbResponse = serde_json::from_value(serde_json::json!({
+            "segments": {
+                "intro": {
+                    "start_ms": 229_500,
+                    "end_ms": 246_500,
+                    "adjusted": false,
+                    "match": "out-of-range",
+                    "confidence": 0.6
+                },
+                "recap": null,
+                "outro": null,
+                "preview": null
+            }
+        }))
+        .expect("valid SkipDB response");
+
+        let candidates = skipdb_candidates(&response);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].source, SkipSegmentSource::SkipDb);
+        assert_eq!(candidates[0].source_match, SkipSegmentMatch::Estimated);
+        assert!(resolve_skip_segment(SkipSegmentKind::Intro, &candidates).is_none());
+    }
+
+    #[test]
+    fn skipdb_adapter_accepts_strong_exact_match() {
+        let response: SkipDbResponse = serde_json::from_value(serde_json::json!({
+            "segments": {
+                "intro": {
+                    "start_ms": 61_000,
+                    "end_ms": 91_000,
+                    "adjusted": false,
+                    "match": "exact",
+                    "confidence": 0.9
+                },
+                "recap": null,
+                "outro": null,
+                "preview": null
+            }
+        }))
+        .expect("valid SkipDB response");
+
+        let candidates = skipdb_candidates(&response);
+        let resolved =
+            resolve_skip_segment(SkipSegmentKind::Intro, &candidates).expect("trusted SkipDB intro");
+        assert_eq!(resolved.from_ms, 61_000);
+        assert_eq!(resolved.to_ms, 91_000);
     }
 
     #[test]
