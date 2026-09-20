@@ -1151,20 +1151,20 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                     self.library_item.as_ref(),
                     &self.skip_segment_candidates,
                 );
-                let cacheable_candidates = self
-                    .skip_segment_candidates
-                    .iter()
-                    .filter(|candidate| {
-                        candidate.source != SkipSegmentSource::SkipDb
-                            && self.skip_segment_sources_loaded.contains(&candidate.source)
-                    })
-                    .cloned()
-                    .collect::<Vec<_>>();
-                let cache_effects = if result.is_ok() && !cacheable_candidates.is_empty() {
-                    Effects::one(skip_segment_cache_write_effect::<E>(
+                let cache_effects = if result.is_ok() {
+                    let cacheable_candidates = self
+                        .skip_segment_candidates
+                        .iter()
+                        .filter(|candidate| candidate.source == *source)
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    skip_segment_cache_write_effect::<E>(
                         context.clone(),
+                        *source,
                         cacheable_candidates,
-                    ))
+                    )
+                    .map(Effects::one)
+                    .unwrap_or_else(Effects::none)
                     .unchanged()
                 } else {
                     Effects::none().unchanged()
@@ -1172,7 +1172,7 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
 
                 resolved_effects.join(cache_effects)
             }
-            Msg::Internal(Internal::SkipSegmentsCacheResult(context, result)) => {
+            Msg::Internal(Internal::SkipSegmentsCacheResult(source, context, result)) => {
                 if self.skip_segment_context.as_ref() != Some(context) {
                     return Effects::none().unchanged();
                 }
@@ -1180,25 +1180,23 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                 let Some(entry) = result.as_ref().ok().and_then(|entry| entry.as_ref()) else {
                     return Effects::none().unchanged();
                 };
-                if entry.context != *context
-                    || E::now().signed_duration_since(entry.cached_at) > Duration::days(30)
-                {
+                if entry.context != *context || entry.source != *source {
+                    return Effects::none().unchanged();
+                }
+                if E::now().signed_duration_since(entry.cached_at) > Duration::days(30) {
+                    return skip_segment_cache_delete_effect::<E>(context.clone(), *source)
+                        .map(Effects::one)
+                        .unwrap_or_else(Effects::none)
+                        .unchanged();
+                }
+                if self.skip_segment_sources_loaded.contains(source) {
                     return Effects::none().unchanged();
                 }
 
-                for cached in &entry.candidates {
-                    if cached.source != SkipSegmentSource::SkipDb
-                        && !self.skip_segment_sources_loaded.contains(&cached.source)
-                        && !self.skip_segment_candidates.iter().any(|candidate| {
-                            candidate.source == cached.source
-                                && candidate.kind == cached.kind
-                                && candidate.start_ms == cached.start_ms
-                                && candidate.end_ms == cached.end_ms
-                        })
-                    {
-                        self.skip_segment_candidates.push(cached.clone());
-                    }
-                }
+                self.skip_segment_candidates
+                    .retain(|candidate| candidate.source != *source);
+                self.skip_segment_candidates
+                    .extend(entry.candidates.iter().cloned());
 
                 apply_resolved_skip_segments(
                     &mut self.intro_outro,
@@ -1825,9 +1823,21 @@ fn skip_segment_context(
     })
 }
 
-fn skip_segment_cache_key(context: &SkipSegmentContext) -> String {
-    format!(
-        "skipSegments:{}:{}:{}:{}",
+fn skip_segment_cache_source_key(source: SkipSegmentSource) -> Option<&'static str> {
+    match source {
+        SkipSegmentSource::IntroDb => Some("introdb"),
+        SkipSegmentSource::TheIntroDb => Some("theintrodb"),
+        SkipSegmentSource::StremioNative | SkipSegmentSource::SkipDb => None,
+    }
+}
+
+fn skip_segment_cache_key(
+    context: &SkipSegmentContext,
+    source: SkipSegmentSource,
+) -> Option<String> {
+    let source = skip_segment_cache_source_key(source)?;
+    Some(format!(
+        "skipSegments:v2:{source}:{}:{}:{}:{}",
         context.item_id,
         context
             .season
@@ -1841,40 +1851,69 @@ fn skip_segment_cache_key(context: &SkipSegmentContext) -> String {
             .duration_ms
             .map(|value| value.to_string())
             .unwrap_or_else(|| "_".to_owned())
-    )
+    ))
 }
 
-fn skip_segment_cache_load_effect<E: Env + 'static>(context: SkipSegmentContext) -> Effect {
-    let key = skip_segment_cache_key(&context);
+fn skip_segment_cache_load_effect<E: Env + 'static>(
+    context: SkipSegmentContext,
+    source: SkipSegmentSource,
+) -> Option<Effect> {
+    let key = skip_segment_cache_key(&context, source)?;
     let result_context = context.clone();
 
-    EffectFuture::Concurrent(
-        E::get_storage::<SkipSegmentCacheEntry>(&key)
-            .map(move |result| {
-                Msg::Internal(Internal::SkipSegmentsCacheResult(result_context, result))
-            })
-            .boxed_env(),
+    Some(
+        EffectFuture::Concurrent(
+            E::get_storage::<SkipSegmentCacheEntry>(&key)
+                .map(move |result| {
+                    Msg::Internal(Internal::SkipSegmentsCacheResult(
+                        source,
+                        result_context,
+                        result,
+                    ))
+                })
+                .boxed_env(),
+        )
+        .into(),
     )
-    .into()
 }
 
 fn skip_segment_cache_write_effect<E: Env + 'static>(
     context: SkipSegmentContext,
+    source: SkipSegmentSource,
     candidates: Vec<SkipSegmentCandidate>,
-) -> Effect {
-    let key = skip_segment_cache_key(&context);
+) -> Option<Effect> {
+    let key = skip_segment_cache_key(&context, source)?;
     let entry = SkipSegmentCacheEntry {
         context,
+        source,
         candidates,
         cached_at: E::now(),
     };
 
-    EffectFuture::Concurrent(
-        E::set_storage(&key, Some(&entry))
-            .map(|result| Msg::Internal(Internal::SkipSegmentsCacheWriteResult(result)))
-            .boxed_env(),
+    Some(
+        EffectFuture::Concurrent(
+            E::set_storage(&key, Some(&entry))
+                .map(|result| Msg::Internal(Internal::SkipSegmentsCacheWriteResult(result)))
+                .boxed_env(),
+        )
+        .into(),
     )
-    .into()
+}
+
+fn skip_segment_cache_delete_effect<E: Env + 'static>(
+    context: SkipSegmentContext,
+    source: SkipSegmentSource,
+) -> Option<Effect> {
+    let key = skip_segment_cache_key(&context, source)?;
+
+    Some(
+        EffectFuture::Concurrent(
+            E::set_storage::<SkipSegmentCacheEntry>(&key, None)
+                .map(|result| Msg::Internal(Internal::SkipSegmentsCacheWriteResult(result)))
+                .boxed_env(),
+        )
+        .into(),
+    )
 }
 
 fn external_skip_segments_update<E: Env + 'static>(
@@ -1896,7 +1935,15 @@ fn external_skip_segments_update<E: Env + 'static>(
     match next_context {
         Some(context) => {
             let mut effects = external_provider_effects::<E>(context.clone());
-            effects.push(skip_segment_cache_load_effect::<E>(context));
+            if !cfg!(target_arch = "wasm32") {
+                for source in [SkipSegmentSource::IntroDb, SkipSegmentSource::TheIntroDb] {
+                    if let Some(effect) =
+                        skip_segment_cache_load_effect::<E>(context.clone(), source)
+                    {
+                        effects.push(effect);
+                    }
+                }
+            }
             Effects::many(effects)
         }
         None => Effects::none(),
