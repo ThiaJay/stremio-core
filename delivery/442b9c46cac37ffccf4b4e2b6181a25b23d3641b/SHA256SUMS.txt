@@ -1,0 +1,3 @@
+06fcc198de659fbf981ad6abbb36fccdf19e5f255f51f56e4369cbb7acba319d  core-web-development.tgz
+24ce78040f32bd07bf2fbce10fe5c1c7a611cdd9bafa24fd7c247757f51ed1dd  core-web-release.tgz
+942666e9f0e9c3405519ef1798c9e528a7b4e632d94f44b63323e6456de7e779  tested-candidate.patch

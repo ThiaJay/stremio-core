@@ -1,0 +1,1049 @@
+diff --git a/src/models/mod.rs b/src/models/mod.rs
+index 27b2d4e..4ea25e7 100644
+--- a/src/models/mod.rs
++++ b/src/models/mod.rs
+@@ -16,5 +16,6 @@ pub mod live_tv_guide;
+ pub mod local_search;
+ pub mod meta_details;
+ pub mod player;
++pub mod skip_intro;
+ pub mod skip_segments;
+ pub mod streaming_server;
+diff --git a/src/models/player.rs b/src/models/player.rs
+index 074152f..39bb721 100644
+--- a/src/models/player.rs
++++ b/src/models/player.rs
+@@ -3,7 +3,6 @@ use std::ops::Div;
+ 
+ use base64::Engine;
+ use futures::{future, FutureExt, TryFutureExt};
+-use num::rational::Ratio;
+ use url::Url;
+ 
+ use crate::constants::{
+@@ -131,6 +130,14 @@ pub struct Player {
+     pub video_scale: Option<VideoScale>,
+     #[serde(skip_serializing_if = "Option::is_none")]
+     pub intro_outro: Option<IntroOutro>,
++    /// Provider neutral descriptor and deterministic seek target for all clients.
++    pub skip_intro: Option<crate::types::player::SkipIntroState>,
++    #[serde(skip_serializing)]
++    pub playback_generation: u64,
++    #[serde(skip_serializing)]
++    pub skip_intro_playback: Option<(u64, u64)>,
++    #[serde(skip_serializing)]
++    pub skip_intro_dismissal: Option<(u64, u64, u64)>,
+     #[serde(skip_serializing)]
+     pub watched: Option<WatchedBitField>,
+     #[serde(skip_serializing)]
+@@ -171,6 +178,20 @@ pub struct Player {
+ 
+ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
+     fn update(&mut self, msg: &Msg, ctx: &Ctx) -> Effects {
++        match msg {
++            Msg::Action(Action::Load(ActionLoad::Player(_))) | Msg::Action(Action::Unload) => {
++                self.playback_generation = self.playback_generation.saturating_add(1);
++                self.skip_intro_playback = None;
++                self.skip_intro_dismissal = None;
++            }
++            Msg::Action(Action::Player(
++                ActionPlayer::Seek { time, duration, .. }
++                | ActionPlayer::TimeChanged { time, duration, .. },
++            )) if self.selected.is_some() => {
++                self.skip_intro_playback = Some((*time, *duration));
++            }
++            _ => {}
++        }
+         let effects = match msg {
+             Msg::Action(Action::Load(ActionLoad::Player(selected))) => {
+                 let same_video = self.selected.as_ref().is_some_and(|previous| {
+@@ -322,7 +343,8 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
+                 let watched_effects =
+                     watched_update(&mut self.watched, &self.meta_item, &self.library_item);
+ 
+-                let skip_gaps_effects = eq_update(&mut self.skip_gaps, None);
++                let skip_gaps_effects = eq_update(&mut self.skip_gaps, None)
++                    .join(eq_update(&mut self.intro_outro, None));
+                 let intro_outro_update_effects = intro_outro_update::<E>(
+                     &mut self.intro_outro,
+                     &ctx.profile,
+@@ -339,6 +361,7 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
+                     self.library_item.as_ref(),
+                     self.series_info.as_ref(),
+                     self.selected.as_ref(),
++                    self.playback_generation,
+                     None,
+                 );
+ 
+@@ -461,7 +484,8 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
+                 let series_info_effects = eq_update(&mut self.series_info, None);
+                 let library_item_effects = eq_update(&mut self.library_item, None);
+                 let watched_effects = eq_update(&mut self.watched, None);
+-                let skip_gaps_effects = eq_update(&mut self.skip_gaps, None);
++                let skip_gaps_effects = eq_update(&mut self.skip_gaps, None)
++                    .join(eq_update(&mut self.intro_outro, None));
+                 let skip_segment_context_effects = eq_update(&mut self.skip_segment_context, None);
+                 let skip_segment_candidates_effects =
+                     eq_update(&mut self.skip_segment_candidates, vec![]);
+@@ -637,6 +661,7 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
+                         Some(library_item),
+                         self.series_info.as_ref(),
+                         self.selected.as_ref(),
++                        self.playback_generation,
+                         Some(*duration),
+                     );
+                     let resolved_skip_effects = apply_resolved_skip_segments(
+@@ -790,6 +815,7 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
+                         Some(library_item),
+                         self.series_info.as_ref(),
+                         self.selected.as_ref(),
++                        self.playback_generation,
+                         Some(*duration),
+                     );
+                     let resolved_skip_effects = apply_resolved_skip_segments(
+@@ -1121,6 +1147,13 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
+                     .join(skip_gaps_effects)
+             }
+             Msg::Internal(Internal::SkipGapsResult(skip_gaps_request, result)) => {
++                if !self
++                    .skip_gaps
++                    .as_ref()
++                    .is_some_and(|(request, _)| request == skip_gaps_request)
++                {
++                    return Effects::none().unchanged();
++                }
+                 let skip_gaps_next = match result.to_owned() {
+                     Ok(response) => Loadable::Ready(response),
+                     Err(err) => Loadable::Err(err),
+@@ -1159,7 +1192,14 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
+                 if let Ok(candidates) = result {
+                     self.skip_segment_candidates
+                         .retain(|candidate| candidate.source != *source);
+-                    self.skip_segment_candidates.extend(candidates.clone());
++                    self.skip_segment_candidates.extend(
++                        candidates
++                            .iter()
++                            .filter(|candidate| {
++                                valid_external_candidate(candidate, *source, context)
++                            })
++                            .cloned(),
++                    );
+                     if !self.skip_segment_sources_loaded.contains(source) {
+                         self.skip_segment_sources_loaded.push(*source);
+                     }
+@@ -1200,10 +1240,7 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
+                 let Some(entry) = result.as_ref().ok().and_then(|entry| entry.as_ref()) else {
+                     return Effects::none().unchanged();
+                 };
+-                if entry.context != *context || entry.source != *source {
+-                    return Effects::none().unchanged();
+-                }
+-                if E::now().signed_duration_since(entry.cached_at) > Duration::days(30) {
++                if !valid_skip_cache(entry, context, *source, E::now()) {
+                     return skip_segment_cache_delete_effect::<E>(context.clone(), *source)
+                         .map(Effects::one)
+                         .unwrap_or_else(Effects::none)
+@@ -1226,6 +1263,18 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
+                 )
+             }
+             Msg::Internal(Internal::SkipSegmentsCacheWriteResult(_)) => Effects::none().unchanged(),
++            Msg::Action(Action::Player(ActionPlayer::DismissSkipIntro {
++                generation,
++                from,
++                to,
++            })) => {
++                if self.skip_intro.as_ref().is_some_and(|state| {
++                    state.generation == *generation && state.from == *from && state.to == *to
++                }) {
++                    self.skip_intro_dismissal = Some((*generation, *from, *to));
++                }
++                Effects::none().unchanged()
++            }
+             Msg::Internal(Internal::ProfileChanged) => {
+                 if let Some(analytics_context) = &mut self.analytics_context {
+                     analytics_context.has_trakt = ctx.profile.has_trakt::<E>();
+@@ -1234,7 +1283,7 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
+             }
+             _ => Effects::none().unchanged(),
+         };
+-        if matches!(
++        let effects = if matches!(
+             msg,
+             Msg::Action(Action::Load(ActionLoad::Player(_)))
+                 | Msg::Action(Action::Unload)
+@@ -1246,7 +1295,29 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
+             effects.join(live_update::<E>(self))
+         } else {
+             effects
+-        }
++        };
++        let skip_intro = self
++            .selected
++            .as_ref()
++            .filter(|_| self.live.is_none() && !self.ended)
++            .and_then(|selected| selected.stream_request.as_ref())
++            .and_then(|request| {
++                let item = self.library_item.as_ref()?;
++                if item.is_live() || item.state.video_id.as_ref() != Some(&request.path.id) {
++                    return None;
++                }
++                let (time, duration) = self.skip_intro_playback?;
++                crate::models::skip_intro::state(
++                    self.intro_outro.as_ref().and_then(|v| v.intro.as_ref()),
++                    &request.path.id,
++                    self.playback_generation,
++                    time,
++                    duration,
++                    &ctx.profile.settings.skip_intro_mode,
++                    self.skip_intro_dismissal,
++                )
++            });
++        effects.join(eq_update(&mut self.skip_intro, skip_intro))
+     }
+ }
+ 
+@@ -1843,6 +1914,7 @@ fn skip_segment_context(
+     }
+ 
+     Some(SkipSegmentContext {
++        playback_generation: 0,
+         item_id: library_item.id.clone(),
+         media_type: library_item.r#type.clone(),
+         season: series_info.map(|info| info.season),
+@@ -1913,8 +1985,10 @@ fn skip_segment_cache_write_effect<E: Env + 'static>(
+     candidates: Vec<SkipSegmentCandidate>,
+ ) -> Option<Effect> {
+     let key = skip_segment_cache_key(&context, source)?;
++    let mut cache_context = context;
++    cache_context.playback_generation = 0;
+     let entry = SkipSegmentCacheEntry {
+-        context,
++        context: cache_context,
+         source,
+         candidates,
+         cached_at: E::now(),
+@@ -1953,6 +2027,7 @@ fn external_skip_segments_update<E: Env + 'static>(
+     library_item: Option<&LibraryItem>,
+     series_info: Option<&SeriesInfo>,
+     selected: Option<&Selected>,
++    playback_generation: u64,
+     playback_duration: Option<u64>,
+ ) -> Effects {
+     let selected_video_id = selected
+@@ -1963,7 +2038,11 @@ fn external_skip_segments_update<E: Env + 'static>(
+         series_info,
+         selected_video_id,
+         playback_duration,
+-    );
++    )
++    .map(|mut context| {
++        context.playback_generation = playback_generation;
++        context
++    });
+     if context_state == &next_context {
+         return Effects::none().unchanged();
+     }
+@@ -1996,21 +2075,13 @@ fn apply_resolved_skip_segments(
+     library_item: Option<&LibraryItem>,
+     external_candidates: &[SkipSegmentCandidate],
+ ) -> Effects {
+-    let Some(library_item) = library_item else {
+-        return Effects::none().unchanged();
++    let native = native_intro_outro(skip_gaps, library_item);
++    let Some(library_item) = library_item.filter(|item| item.state.duration > 0) else {
++        return eq_update(intro_outro, None);
+     };
+-    if library_item.state.duration == 0 || external_candidates.is_empty() {
+-        return Effects::none().unchanged();
+-    }
+-
+-    let has_external_intro =
+-        resolve_skip_segment(SkipSegmentKind::Intro, external_candidates).is_some();
+-    let has_external_outro =
+-        resolve_skip_segment(SkipSegmentKind::Outro, external_candidates).is_some();
+-    if !has_external_intro && !has_external_outro {
+-        return Effects::none().unchanged();
++    if external_candidates.is_empty() {
++        return eq_update(intro_outro, native);
+     }
+-
+     let mut candidates = external_candidates.to_vec();
+     if let Some((_, Loadable::Ready(response))) = skip_gaps {
+         candidates.extend(stremio_native_candidates(
+@@ -2018,12 +2089,14 @@ fn apply_resolved_skip_segments(
+             library_item.state.duration,
+         ));
+     }
+-
+-    let current = intro_outro.clone().unwrap_or(IntroOutro {
++    let baseline = native.unwrap_or(IntroOutro {
+         intro: None,
+         outro: None,
+     });
+-    let intro = if has_external_intro {
++    let intro = if external_candidates
++        .iter()
++        .any(|c| c.kind == SkipSegmentKind::Intro)
++    {
+         resolve_skip_segment(SkipSegmentKind::Intro, &candidates).map(|segment| IntroData {
+             from: segment.from_ms,
+             to: segment.to_ms,
+@@ -2032,17 +2105,58 @@ fn apply_resolved_skip_segments(
+                 .then_some(segment.to_ms.abs_diff(segment.from_ms)),
+         })
+     } else {
+-        current.intro
++        baseline.intro
+     };
+-    let outro = if has_external_outro {
++    let outro = if external_candidates
++        .iter()
++        .any(|c| c.kind == SkipSegmentKind::Outro)
++    {
+         resolve_skip_segment(SkipSegmentKind::Outro, &candidates).map(|segment| segment.from_ms)
+     } else {
+-        current.outro
++        baseline.outro
+     };
+-
+     eq_update(intro_outro, Some(IntroOutro { intro, outro }))
+ }
+ 
++fn valid_external_candidate(
++    candidate: &SkipSegmentCandidate,
++    source: SkipSegmentSource,
++    context: &SkipSegmentContext,
++) -> bool {
++    source != SkipSegmentSource::StremioNative
++        && candidate.source == source
++        && context.duration_ms.is_some_and(|duration| {
++            candidate.end_ms > candidate.start_ms
++                && candidate.end_ms <= duration
++                && (candidate.kind != SkipSegmentKind::Intro || candidate.end_ms < duration)
++        })
++        && candidate.source_confidence.map_or(true, |confidence| {
++            confidence.is_finite() && (0.0..=1.0).contains(&confidence)
++        })
++}
++
++fn valid_skip_cache(
++    entry: &SkipSegmentCacheEntry,
++    context: &SkipSegmentContext,
++    source: SkipSegmentSource,
++    now: DateTime<Utc>,
++) -> bool {
++    let mut identity = context.clone();
++    identity.playback_generation = 0;
++    let mut cached_identity = entry.context.clone();
++    cached_identity.playback_generation = 0;
++    let age = now.signed_duration_since(entry.cached_at);
++    skip_segment_cache_source_key(source).is_some()
++        && entry.source == source
++        && cached_identity == identity
++        && age >= Duration::zero()
++        && age < Duration::days(30)
++        && entry
++            .candidates
++            .iter()
++            .all(|c| valid_external_candidate(c, source, context))
++}
++
+ fn intro_outro_update<E: Env + 'static>(
+     intro_outro: &mut Option<IntroOutro>,
+     profile: &Profile,
+@@ -2061,13 +2175,24 @@ fn intro_outro_update<E: Env + 'static>(
+         skip_gaps,
+     );
+ 
+-    let intro_outro_effects = match (skip_gaps, library_item) {
++    let value = native_intro_outro(skip_gaps, library_item);
++    skip_gaps_effects.join(eq_update(intro_outro, value))
++}
++
++fn native_intro_outro(
++    skip_gaps: &Option<(SkipGapsRequest, Loadable<SkipGapsResponse, CtxError>)>,
++    library_item: Option<&LibraryItem>,
++) -> Option<IntroOutro> {
++    match (skip_gaps, library_item) {
+         (Some((_, Loadable::Ready(response))), Some(library_item))
+             if library_item.state.duration > 0 =>
+         {
+             let outro_time = {
+                 let outro_durations = response.gaps.iter().filter_map(|(duration, skip_gaps)| {
+-                    skip_gaps.outro.map(|outro| (duration, outro))
++                    skip_gaps
++                        .outro
++                        .filter(|outro| *duration > 0 && *outro > 0 && *outro < *duration)
++                        .map(|outro| (duration, outro))
+                 });
+ 
+                 let closest_duration = outro_durations.reduce(
+@@ -2087,10 +2212,11 @@ fn intro_outro_update<E: Env + 'static>(
+             };
+ 
+             let intro_time = {
+-                let intro_durations = response
+-                    .gaps
+-                    .iter()
+-                    .filter(|(_duration, skip_gaps)| !skip_gaps.seek_history.is_empty());
++                let intro_durations = response.gaps.iter().filter(|(duration, skip_gaps)| {
++                    **duration > 0
++                        && strongest_seek_event(skip_gaps)
++                            .is_some_and(|event| event.to < **duration)
++                });
+                 let closest_duration = intro_durations.reduce(
+                     |(previous_duration, previous_skip_gaps),
+                      (current_duration, current_skip_gaps)| {
+@@ -2106,12 +2232,12 @@ fn intro_outro_update<E: Env + 'static>(
+ 
+                 closest_duration.and_then(|(closest_duration, skip_gaps)| {
+                 let duration_diff_in_secs = (library_item.state.duration.abs_diff(*closest_duration)).div(1000 * 10) / 10;
+-                let duration_ration = Ratio::new(library_item.state.duration, *closest_duration);
++
+                 // even though we checked for len() > 0 make sure we don't panic if somebody decides to remove that check!
+                 let matched_intro = strongest_seek_event(skip_gaps).map(|seek_event| {
+                     let intro_data = IntroData {
+-                        from: (duration_ration * seek_event.from).to_integer(),
+-                        to: (duration_ration * seek_event.to).to_integer(),
++                        from: ((library_item.state.duration as u128 * seek_event.from as u128) / *closest_duration as u128) as u64,
++                        to: ((library_item.state.duration as u128 * seek_event.to as u128) / *closest_duration as u128) as u64,
+                         duration: if duration_diff_in_secs > 0 { Some(seek_event.to.abs_diff(seek_event.from)) } else { None }
+                     };
+                     tracing::debug!(?seek_event, ?intro_data, "Player: Intro match for event by duration with difference of {duration_diff_in_secs} seconds",);
+@@ -2123,18 +2249,13 @@ fn intro_outro_update<E: Env + 'static>(
+               })
+             };
+ 
+-            eq_update(
+-                intro_outro,
+-                Some(IntroOutro {
+-                    intro: intro_time,
+-                    outro: outro_time,
+-                }),
+-            )
++            Some(IntroOutro {
++                intro: intro_time,
++                outro: outro_time,
++            })
+         }
+-        _ => eq_update(intro_outro, None),
+-    };
+-
+-    skip_gaps_effects.join(intro_outro_effects)
++        _ => None,
++    }
+ }
+ 
+ fn skip_gaps_update<E: Env + 'static>(
+@@ -2471,3 +2592,7 @@ mod tests {
+         assert_eq!(calculate_outro(&library_item, 11000, 32000), None);
+     }
+ }
++
++#[cfg(test)]
++#[path = "player_skip_delivery_tests.rs"]
++mod skip_delivery_tests;
+diff --git a/src/models/player_skip_delivery_tests.rs b/src/models/player_skip_delivery_tests.rs
+new file mode 100644
+index 0000000..9769a64
+--- /dev/null
++++ b/src/models/player_skip_delivery_tests.rs
+@@ -0,0 +1,364 @@
++use super::*;
++use crate::types::{
++    api::{SeekEvent, SkipGaps},
++    library::LibraryItemState,
++    profile::SkipIntroMode,
++    resource::{PosterShape, StreamBehaviorHints},
++    skip_segments::{SkipSegmentMatch, SkipSegmentStreamSpecificity},
++};
++use crate::unit_tests::TestEnv;
++use std::collections::HashMap;
++
++fn item() -> LibraryItem {
++    LibraryItem {
++        id: "tt0903747".into(),
++        name: "Test episode".into(),
++        r#type: "series".into(),
++        poster: None,
++        poster_shape: PosterShape::Poster,
++        removed: false,
++        temp: true,
++        ctime: None,
++        mtime: Utc::now(),
++        behavior_hints: Default::default(),
++        state: LibraryItemState {
++            last_watched: None,
++            time_watched: 0,
++            time_offset: 15_000,
++            overall_time_watched: 0,
++            times_watched: 0,
++            flagged_watched: 0,
++            duration: 100_000,
++            video_id: Some("tt0903747:1:5".into()),
++            watched: None,
++            no_notif: true,
++        },
++    }
++}
++
++fn candidate(source: SkipSegmentSource, start_ms: u64) -> SkipSegmentCandidate {
++    SkipSegmentCandidate {
++        kind: SkipSegmentKind::Intro,
++        start_ms,
++        end_ms: start_ms + 10_000,
++        source,
++        source_match: SkipSegmentMatch::ExactEpisode,
++        source_confidence: Some(0.95),
++        adjusted: false,
++        evidence_count: 20,
++        stream_specificity: SkipSegmentStreamSpecificity::Episode,
++    }
++}
++
++fn context(generation: u64) -> SkipSegmentContext {
++    SkipSegmentContext {
++        playback_generation: generation,
++        item_id: "tt0903747".into(),
++        media_type: "series".into(),
++        season: Some(1),
++        episode: Some(5),
++        duration_ms: Some(100_000),
++        open_subtitles_hash: None,
++        stream_name_hash: None,
++    }
++}
++
++fn selected() -> Selected {
++    Selected {
++        stream: Stream {
++            source: StreamSource::Url {
++                url: "https://example.org/video.mp4".parse().unwrap(),
++            },
++            name: None,
++            description: None,
++            thumbnail: None,
++            subtitles: vec![],
++            behavior_hints: StreamBehaviorHints::default(),
++        },
++        stream_request: Some(ResourceRequest {
++            base: "https://example.org/manifest.json".parse().unwrap(),
++            path: ResourcePath {
++                resource: "stream".into(),
++                r#type: "series".into(),
++                id: "tt0903747:1:5".into(),
++                extra: vec![],
++            },
++        }),
++        meta_request: None,
++        subtitles_path: None,
++    }
++}
++
++fn update(player: &mut Player, msg: Msg, ctx: &Ctx) -> Effects {
++    <Player as UpdateWithCtx<TestEnv>>::update(player, &msg, ctx)
++}
++
++#[test]
++fn successful_empty_result_withdraws_previous_external_intro() {
++    let mut value = None;
++    let library = item();
++    apply_resolved_skip_segments(
++        &mut value,
++        &None,
++        Some(&library),
++        &[candidate(SkipSegmentSource::IntroDb, 10_000)],
++    );
++    assert!(value.as_ref().unwrap().intro.is_some());
++    apply_resolved_skip_segments(&mut value, &None, Some(&library), &[]);
++    assert!(value.is_none());
++}
++
++#[test]
++fn conflicting_fresh_providers_withdraw_previous_external_intro() {
++    let library = item();
++    let mut value = None;
++    let a = candidate(SkipSegmentSource::IntroDb, 10_000);
++    apply_resolved_skip_segments(&mut value, &None, Some(&library), std::slice::from_ref(&a));
++    assert!(value.as_ref().unwrap().intro.is_some());
++    apply_resolved_skip_segments(
++        &mut value,
++        &None,
++        Some(&library),
++        &[a, candidate(SkipSegmentSource::TheIntroDb, 50_000)],
++    );
++    assert!(value.as_ref().unwrap().intro.is_none());
++}
++
++#[test]
++fn duration_loss_clears_previous_resolved_evidence() {
++    let mut library = item();
++    let mut value = None;
++    let candidates = [candidate(SkipSegmentSource::IntroDb, 10_000)];
++    apply_resolved_skip_segments(&mut value, &None, Some(&library), &candidates);
++    library.state.duration = 0;
++    apply_resolved_skip_segments(&mut value, &None, Some(&library), &candidates);
++    assert!(value.is_none());
++}
++
++#[test]
++fn cache_restore_ignores_old_session_generation_not_media_identity() {
++    let now = Utc::now();
++    let mut entry = SkipSegmentCacheEntry {
++        context: context(1),
++        source: SkipSegmentSource::IntroDb,
++        candidates: vec![candidate(SkipSegmentSource::IntroDb, 10_000)],
++        cached_at: now,
++    };
++    assert!(valid_skip_cache(
++        &entry,
++        &context(2),
++        SkipSegmentSource::IntroDb,
++        now
++    ));
++    entry.context.episode = Some(6);
++    assert!(!valid_skip_cache(
++        &entry,
++        &context(2),
++        SkipSegmentSource::IntroDb,
++        now
++    ));
++}
++
++#[test]
++fn future_expired_wrong_provider_and_malformed_cache_fail_closed() {
++    let now = Utc::now();
++    let entry = SkipSegmentCacheEntry {
++        context: context(1),
++        source: SkipSegmentSource::IntroDb,
++        candidates: vec![candidate(SkipSegmentSource::IntroDb, 10_000)],
++        cached_at: now,
++    };
++    for timestamp in [
++        now + Duration::milliseconds(1),
++        now - Duration::days(30),
++        now - Duration::days(31),
++    ] {
++        let mut invalid = entry.clone();
++        invalid.cached_at = timestamp;
++        assert!(!valid_skip_cache(
++            &invalid,
++            &context(1),
++            SkipSegmentSource::IntroDb,
++            now
++        ));
++    }
++    for confidence in [f64::NAN, f64::INFINITY, -1.0, 1.01] {
++        let mut invalid = entry.clone();
++        invalid.candidates[0].source_confidence = Some(confidence);
++        assert!(!valid_skip_cache(
++            &invalid,
++            &context(1),
++            SkipSegmentSource::IntroDb,
++            now
++        ));
++    }
++    let mut invalid = entry.clone();
++    invalid.candidates[0].source = SkipSegmentSource::SkipDb;
++    assert!(!valid_skip_cache(
++        &invalid,
++        &context(1),
++        SkipSegmentSource::IntroDb,
++        now
++    ));
++    let mut invalid = entry.clone();
++    invalid.candidates[0].end_ms = 100_000;
++    assert!(!valid_skip_cache(
++        &invalid,
++        &context(1),
++        SkipSegmentSource::IntroDb,
++        now
++    ));
++    assert!(!valid_skip_cache(
++        &entry,
++        &context(1),
++        SkipSegmentSource::SkipDb,
++        now
++    ));
++}
++
++#[test]
++fn late_provider_and_cache_results_cannot_cross_player_generations() {
++    let _guard = TestEnv::reset().unwrap();
++    let mut player = Player {
++        skip_segment_context: Some(context(2)),
++        ..Default::default()
++    };
++    let ctx = Ctx::default();
++    let candidates = vec![candidate(SkipSegmentSource::IntroDb, 10_000)];
++    let result = update(
++        &mut player,
++        Msg::Internal(Internal::SkipSegmentsResult(
++            SkipSegmentSource::IntroDb,
++            context(1),
++            Ok(candidates.clone()),
++        )),
++        &ctx,
++    );
++    assert!(!result.has_changed);
++    assert!(player.skip_segment_candidates.is_empty());
++    let entry = SkipSegmentCacheEntry {
++        context: context(1),
++        source: SkipSegmentSource::IntroDb,
++        candidates,
++        cached_at: Utc::now(),
++    };
++    let result = update(
++        &mut player,
++        Msg::Internal(Internal::SkipSegmentsCacheResult(
++            SkipSegmentSource::IntroDb,
++            context(1),
++            Ok(Some(entry)),
++        )),
++        &ctx,
++    );
++    assert!(!result.has_changed);
++    assert!(player.skip_segment_candidates.is_empty());
++}
++
++#[test]
++fn model_dismissal_is_generation_bound_and_preference_updates_shared_target() {
++    let _guard = TestEnv::reset().unwrap();
++    let mut player = Player {
++        selected: Some(selected()),
++        library_item: Some(item()),
++        playback_generation: 2,
++        skip_intro_playback: Some((15_000, 100_000)),
++        intro_outro: Some(IntroOutro {
++            intro: Some(IntroData {
++                from: 10_000,
++                to: 20_000,
++                duration: None,
++            }),
++            outro: None,
++        }),
++        ..Default::default()
++    };
++    let mut ctx = Ctx::default();
++    update(&mut player, Msg::Internal(Internal::ProfileChanged), &ctx);
++    assert_eq!(player.skip_intro.as_ref().unwrap().seek_to, Some(20_000));
++    update(
++        &mut player,
++        Msg::Action(Action::Player(ActionPlayer::DismissSkipIntro {
++            generation: 1,
++            from: 10_000,
++            to: 20_000,
++        })),
++        &ctx,
++    );
++    assert_eq!(player.skip_intro.as_ref().unwrap().seek_to, Some(20_000));
++    ctx.profile.settings.skip_intro_mode = SkipIntroMode::Never;
++    update(&mut player, Msg::Internal(Internal::ProfileChanged), &ctx);
++    assert_eq!(player.skip_intro.as_ref().unwrap().seek_to, None);
++    ctx.profile.settings.skip_intro_mode = SkipIntroMode::Always;
++    update(&mut player, Msg::Internal(Internal::ProfileChanged), &ctx);
++    assert_eq!(player.skip_intro.as_ref().unwrap().seek_to, Some(20_000));
++    update(
++        &mut player,
++        Msg::Action(Action::Player(ActionPlayer::DismissSkipIntro {
++            generation: 2,
++            from: 10_000,
++            to: 20_000,
++        })),
++        &ctx,
++    );
++    assert_eq!(player.skip_intro.as_ref().unwrap().seek_to, None);
++    let json = serde_json::to_value(&player).unwrap();
++    assert_eq!(json["skipIntro"]["videoId"], "tt0903747:1:5");
++    assert_eq!(json["skipIntro"]["dismissed"], true);
++    update(&mut player, Msg::Action(Action::Unload), &ctx);
++    assert!(player.skip_intro.is_none());
++    assert!(player.intro_outro.is_none());
++    assert!(player.skip_intro_playback.is_none());
++    assert!(player.skip_intro_dismissal.is_none());
++}
++
++#[test]
++fn new_load_resets_descriptor_even_for_identical_source() {
++    let _guard = TestEnv::reset().unwrap();
++    let mut player = Player {
++        selected: Some(selected()),
++        playback_generation: 4,
++        skip_intro_playback: Some((15_000, 100_000)),
++        ..Default::default()
++    };
++    update(
++        &mut player,
++        Msg::Action(Action::Load(ActionLoad::Player(Box::new(selected())))),
++        &Ctx::default(),
++    );
++    assert_eq!(player.playback_generation, 5);
++    assert!(player.skip_intro.is_none());
++    assert!(player.skip_intro_playback.is_none());
++}
++
++#[test]
++fn invalid_native_durations_cannot_panic_or_finish_episode() {
++    let response = SkipGapsResponse {
++        accuracy: "byEpisode".into(),
++        gaps: HashMap::from([
++            (
++                0,
++                SkipGaps {
++                    seek_history: vec![SeekEvent {
++                        records: 100,
++                        from: 0,
++                        to: u64::MAX,
++                    }],
++                    outro: None,
++                },
++            ),
++            (
++                100_000,
++                SkipGaps {
++                    seek_history: vec![SeekEvent {
++                        records: 100,
++                        from: 10_000,
++                        to: 100_000,
++                    }],
++                    outro: None,
++                },
++            ),
++        ]),
++    };
++    assert!(stremio_native_candidates(&response, 100_000).is_empty());
++}
+diff --git a/src/models/skip_intro.rs b/src/models/skip_intro.rs
+new file mode 100644
+index 0000000..77d60a3
+--- /dev/null
++++ b/src/models/skip_intro.rs
+@@ -0,0 +1,115 @@
++use crate::types::{
++    player::{IntroData, SkipIntroState},
++    profile::SkipIntroMode,
++};
++
++/// The half open intro window and seek destination are shared by every client.
++pub fn state(
++    intro: Option<&IntroData>,
++    video_id: &str,
++    generation: u64,
++    time: u64,
++    duration: u64,
++    mode: &SkipIntroMode,
++    dismissal: Option<(u64, u64, u64)>,
++) -> Option<SkipIntroState> {
++    let intro = intro?;
++    if video_id.is_empty()
++        || generation == 0
++        || duration == 0
++        || time > duration
++        || intro.to <= intro.from
++        || intro.to >= duration
++    {
++        return None;
++    }
++    let active = time >= intro.from && time < intro.to;
++    let dismissed = dismissal == Some((generation, intro.from, intro.to));
++    Some(SkipIntroState {
++        generation,
++        video_id: video_id.to_owned(),
++        from: intro.from,
++        to: intro.to,
++        duration,
++        mode: mode.clone(),
++        active,
++        dismissed,
++        seek_to: (active && !dismissed && *mode != SkipIntroMode::Never).then_some(intro.to),
++    })
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    #[test]
++    fn boundaries_modes_and_dismissal_are_deterministic() {
++        let intro = IntroData {
++            from: 10_000,
++            to: 20_000,
++            duration: None,
++        };
++        for mode in [
++            SkipIntroMode::Ask,
++            SkipIntroMode::Always,
++            SkipIntroMode::Never,
++        ] {
++            for time in [9_999, 10_000, 19_999, 20_000, 20_001] {
++                let actual = state(Some(&intro), "episode", 1, time, 100_000, &mode, None).unwrap();
++                let expected = (10_000..20_000).contains(&time) && mode != SkipIntroMode::Never;
++                assert_eq!(actual.seek_to, expected.then_some(20_000));
++            }
++        }
++        let dismissed = state(
++            Some(&intro),
++            "episode",
++            1,
++            15_000,
++            100_000,
++            &SkipIntroMode::Always,
++            Some((1, 10_000, 20_000)),
++        )
++        .unwrap();
++        assert_eq!(dismissed.seek_to, None);
++        let reloaded = state(
++            Some(&intro),
++            "episode",
++            2,
++            15_000,
++            100_000,
++            &SkipIntroMode::Always,
++            Some((1, 10_000, 20_000)),
++        )
++        .unwrap();
++        assert_eq!(reloaded.seek_to, Some(20_000));
++    }
++    #[test]
++    fn malformed_segments_and_missing_runtime_information_fail_closed() {
++        for (from, to, time, duration, generation, id) in [
++            (0, 0, 0, 100, 1, "episode"),
++            (20, 10, 12, 100, 1, "episode"),
++            (0, 100, 12, 100, 1, "episode"),
++            (0, 101, 12, 100, 1, "episode"),
++            (0, 20, 12, 0, 1, "episode"),
++            (0, 20, 101, 100, 1, "episode"),
++            (0, 20, 12, 100, 0, "episode"),
++            (0, 20, 12, 100, 1, ""),
++        ] {
++            let intro = IntroData {
++                from,
++                to,
++                duration: None,
++            };
++            assert!(state(
++                Some(&intro),
++                id,
++                generation,
++                time,
++                duration,
++                &SkipIntroMode::Ask,
++                None
++            )
++            .is_none());
++        }
++        assert!(state(None, "episode", 1, 12, 100, &SkipIntroMode::Ask, None).is_none());
++    }
++}
+diff --git a/src/models/skip_segments.rs b/src/models/skip_segments.rs
+index 05a1321..00aa891 100644
+--- a/src/models/skip_segments.rs
++++ b/src/models/skip_segments.rs
+@@ -62,7 +62,8 @@ pub fn stremio_native_candidates(
+     let Some((source_duration, skip_gaps)) = response
+         .gaps
+         .iter()
+-        .min_by_key(|(duration, _)| duration.abs_diff(target_duration_ms))
++        .filter(|(duration, _)| **duration > 0)
++        .min_by_key(|(duration, _)| (duration.abs_diff(target_duration_ms), **duration))
+     else {
+         return Vec::new();
+     };
+@@ -76,7 +77,8 @@ pub fn stremio_native_candidates(
+     let specificity = native_specificity(&response.accuracy);
+     let mut candidates = Vec::with_capacity(2);
+ 
+-    if let Some(event) = strongest_seek_event(skip_gaps) {
++    if let Some(event) = strongest_seek_event(skip_gaps).filter(|event| event.to < *source_duration)
++    {
+         candidates.push(SkipSegmentCandidate {
+             kind: SkipSegmentKind::Intro,
+             start_ms: scale_timestamp(event.from, *source_duration, target_duration_ms),
+@@ -639,6 +641,7 @@ mod tests {
+     #[test]
+     fn skipdb_provider_url_uses_duration_seconds() {
+         let context = SkipSegmentContext {
++            playback_generation: 0,
+             item_id: "tt0903747".into(),
+             media_type: "series".into(),
+             season: Some(1),
+@@ -734,6 +737,7 @@ mod tests {
+     #[test]
+     fn theintrodb_provider_url_uses_duration_milliseconds() {
+         let context = SkipSegmentContext {
++            playback_generation: 0,
+             item_id: "tt0903747".into(),
+             media_type: "series".into(),
+             season: Some(1),
+diff --git a/src/runtime/msg/action.rs b/src/runtime/msg/action.rs
+index ba25e0d..0b929c6 100644
+--- a/src/runtime/msg/action.rs
++++ b/src/runtime/msg/action.rs
+@@ -232,6 +232,12 @@ pub enum ActionLink {
+ #[derive(Clone, Deserialize, Debug)]
+ #[serde(tag = "action", content = "args")]
+ pub enum ActionPlayer {
++    /// Dismiss or consume a generation-bound intro in the shared player model.
++    DismissSkipIntro {
++        generation: u64,
++        from: u64,
++        to: u64,
++    },
+     /// Re-evaluate live programme metadata after activation or clock changes.
+     RefreshLive,
+     #[serde(rename_all = "camelCase")]
+diff --git a/src/types/player.rs b/src/types/player.rs
+index 3513f66..9be1d36 100644
+--- a/src/types/player.rs
++++ b/src/types/player.rs
+@@ -56,3 +56,18 @@ pub struct IntroData {
+     /// and stream duration ([`LibraryItem.state.duration`]) > 0!
+     pub duration: Option<u64>,
+ }
++
++/// Portable presentation state. The client performs seek_to through its media actuator.
++#[derive(Clone, Serialize, Debug, PartialEq, Eq)]
++#[serde(rename_all = "camelCase")]
++pub struct SkipIntroState {
++    pub generation: u64,
++    pub video_id: String,
++    pub from: u64,
++    pub to: u64,
++    pub duration: u64,
++    pub mode: crate::types::profile::SkipIntroMode,
++    pub active: bool,
++    pub dismissed: bool,
++    pub seek_to: Option<u64>,
++}
+diff --git a/src/types/skip_segments.rs b/src/types/skip_segments.rs
+index b2f583f..dc8984d 100644
+--- a/src/types/skip_segments.rs
++++ b/src/types/skip_segments.rs
+@@ -58,6 +58,8 @@ pub struct ResolvedSkipSegment {
+ 
+ #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+ pub struct SkipSegmentContext {
++    #[serde(default)]
++    pub playback_generation: u64,
+     pub item_id: String,
+     pub media_type: String,
+     pub season: Option<u32>,
+diff --git a/stremio-core-web/src/model/serialize_player.rs b/stremio-core-web/src/model/serialize_player.rs
+index 7db8cdf..214addc 100644
+--- a/stremio-core-web/src/model/serialize_player.rs
++++ b/stremio-core-web/src/model/serialize_player.rs
+@@ -120,6 +120,7 @@ mod model {
+         pub video_scale: Option<&'a VideoScale>,
+         #[serde(skip_serializing_if = "Option::is_none")]
+         pub intro_outro: Option<&'a stremio_core::types::player::IntroOutro>,
++        pub skip_intro: Option<&'a stremio_core::types::player::SkipIntroState>,
+         pub title: Option<String>,
+         pub addon: Option<model::DescriptorPreview<'a>>,
+     }
+@@ -338,6 +339,7 @@ pub fn serialize_player<E: stremio_core::runtime::Env + 'static>(
+         subtitle_preference: player.subtitle_preference.as_ref(),
+         video_scale: player.video_scale.as_ref(),
+         intro_outro: player.intro_outro.as_ref(),
++        skip_intro: player.skip_intro.as_ref(),
+         title: player.selected.as_ref().and_then(|selected| {
+             player
+                 .meta_item
