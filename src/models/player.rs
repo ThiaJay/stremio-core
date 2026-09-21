@@ -1349,6 +1349,14 @@ where
     }
 }
 
+fn select_next_stream(streams: &[Stream], current_stream: &Stream) -> Option<Stream> {
+    streams
+        .iter()
+        .find(|next_stream| next_stream.is_binge_match(current_stream))
+        .cloned()
+        .or_else(|| (streams.len() == 1).then(|| streams[0].clone()))
+}
+
 fn next_stream_update(
     stream: &mut Option<Stream>,
     next_streams: &Option<ResourceLoadable<Vec<Stream>>>,
@@ -1361,15 +1369,7 @@ fn next_stream_update(
                 content: Some(Loadable::Ready(streams)),
                 ..
             }),
-        ) => streams
-            .iter()
-            .find(|next_stream| next_stream.is_binge_match(stream))
-            .cloned()
-            .or_else(|| {
-                (streams.len() == 1)
-                    .then(|| streams.first().cloned())
-                    .flatten()
-            }),
+        ) => select_next_stream(streams, stream),
         _ => None,
     };
 
@@ -1902,12 +1902,62 @@ mod tests {
     use chrono::Utc;
 
     use crate::{
-        models::player::calculate_outro,
+        models::player::{calculate_outro, select_next_stream},
         types::{
             library::{LibraryItem, LibraryItemState},
-            resource::PosterShape,
+            resource::{PosterShape, Stream, StreamBehaviorHints, StreamSource},
         },
     };
+
+    fn test_stream(url: &str, binge_group: Option<&str>) -> Stream {
+        Stream {
+            source: StreamSource::Url {
+                url: url.parse().unwrap(),
+            },
+            name: None,
+            description: None,
+            thumbnail: None,
+            subtitles: vec![],
+            behavior_hints: StreamBehaviorHints {
+                binge_group: binge_group.map(str::to_owned),
+                ..Default::default()
+            },
+        }
+    }
+
+    #[test]
+    fn next_stream_prefers_matching_binge_group() {
+        let current = test_stream("https://current.example/video", Some("group-a"));
+        let expected = test_stream("https://next.example/match", Some("group-a"));
+        let streams = vec![
+            test_stream("https://next.example/other", Some("group-b")),
+            expected.clone(),
+        ];
+
+        assert_eq!(select_next_stream(&streams, &current), Some(expected));
+    }
+
+    #[test]
+    fn next_stream_uses_single_unambiguous_fallback() {
+        let current = test_stream("https://current.example/video", None);
+        let expected = test_stream("https://next.example/only", None);
+
+        assert_eq!(
+            select_next_stream(std::slice::from_ref(&expected), &current),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn next_stream_does_not_guess_between_multiple_unmatched_streams() {
+        let current = test_stream("https://current.example/video", Some("group-a"));
+        let streams = vec![
+            test_stream("https://next.example/one", Some("group-b")),
+            test_stream("https://next.example/two", Some("group-c")),
+        ];
+
+        assert_eq!(select_next_stream(&streams, &current), None);
+    }
 
     #[test]
     fn test_calculate_outro() {
