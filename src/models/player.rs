@@ -1364,7 +1364,12 @@ fn next_stream_update(
         ) => streams
             .iter()
             .find(|next_stream| next_stream.is_binge_match(stream))
-            .cloned(),
+            .cloned()
+            .or_else(|| {
+                (streams.len() == 1)
+                    .then(|| streams.first().cloned())
+                    .flatten()
+            }),
         _ => None,
     };
 
