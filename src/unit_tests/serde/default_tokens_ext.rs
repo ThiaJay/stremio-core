@@ -378,7 +378,7 @@ impl DefaultTokens for Settings {
         vec![
             Token::Struct {
                 name: "Settings",
-                len: 38,
+                len: 39,
             },
             Token::Str("interfaceLanguage"),
             Token::Str("eng"),
@@ -409,6 +409,11 @@ impl DefaultTokens for Settings {
             },
             Token::Str("nextVideoNotificationDuration"),
             Token::U32(35000),
+            Token::Str("skipIntroMode"),
+            Token::UnitVariant {
+                name: "SkipIntroMode",
+                variant: "ask",
+            },
             Token::Str("audioPassthrough"),
             Token::Bool(false),
             Token::Str("audioLanguage"),

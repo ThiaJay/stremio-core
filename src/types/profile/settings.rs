@@ -19,6 +19,8 @@ pub struct Settings {
     pub video_mode: Option<String>,
     pub frame_rate_matching_strategy: FrameRateMatchingStrategy,
     pub next_video_notification_duration: u32,
+    #[serde(default)]
+    pub skip_intro_mode: SkipIntroMode,
     pub audio_passthrough: bool,
     pub audio_language: Option<String>,
     pub secondary_audio_language: Option<String>,
@@ -53,6 +55,20 @@ pub struct Settings {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SkipIntroMode {
+    Ask,
+    Always,
+    Never,
+}
+
+impl Default for SkipIntroMode {
+    fn default() -> Self {
+        Self::Ask
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FrameRateMatchingStrategy {
     Disabled,
     FrameRateOnly,
@@ -72,6 +88,7 @@ impl Default for Settings {
             gamepad_support: false,
             frame_rate_matching_strategy: FrameRateMatchingStrategy::Disabled,
             next_video_notification_duration: 35000,
+            skip_intro_mode: SkipIntroMode::Ask,
             audio_passthrough: false,
             streaming_server_url: STREAMING_SERVER_URL.to_owned(),
             interface_language: "eng".to_owned(),
