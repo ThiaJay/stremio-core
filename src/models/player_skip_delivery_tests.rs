@@ -256,6 +256,32 @@ fn late_provider_and_cache_results_cannot_cross_player_generations() {
 }
 
 #[test]
+fn fresh_intro_ending_at_media_duration_fails_closed() {
+    let _guard = TestEnv::reset().unwrap();
+    let mut player = Player {
+        library_item: Some(item()),
+        skip_segment_context: Some(context(3)),
+        ..Default::default()
+    };
+    let mut boundary = candidate(SkipSegmentSource::SkipDb, 90_000);
+    boundary.end_ms = 100_000;
+
+    let result = update(
+        &mut player,
+        Msg::Internal(Internal::SkipSegmentsResult(
+            SkipSegmentSource::SkipDb,
+            context(3),
+            Ok(vec![boundary]),
+        )),
+        &Ctx::default(),
+    );
+
+    assert!(!result.has_changed);
+    assert!(player.skip_segment_candidates.is_empty());
+    assert!(player.intro_outro.is_none());
+}
+
+#[test]
 fn model_dismissal_is_generation_bound_and_preference_updates_shared_target() {
     let _guard = TestEnv::reset().unwrap();
     let mut player = Player {
