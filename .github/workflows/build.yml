@@ -56,6 +56,8 @@ jobs:
 
   build-stremio-core-web:
     name: "stremio-core-web: test (wasm) and build"
+    permissions:
+      contents: write
 
     env:
       NODE_VERSION: 12
