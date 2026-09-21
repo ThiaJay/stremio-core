@@ -3,7 +3,6 @@ use std::ops::Div;
 
 use base64::Engine;
 use futures::{future, FutureExt, TryFutureExt};
-use num::rational::Ratio;
 use url::Url;
 
 use crate::constants::{
@@ -131,6 +130,14 @@ pub struct Player {
     pub video_scale: Option<VideoScale>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub intro_outro: Option<IntroOutro>,
+    /// Provider neutral descriptor and deterministic seek target for all clients.
+    pub skip_intro: Option<crate::types::player::SkipIntroState>,
+    #[serde(skip_serializing)]
+    pub playback_generation: u64,
+    #[serde(skip_serializing)]
+    pub skip_intro_playback: Option<(u64, u64)>,
+    #[serde(skip_serializing)]
+    pub skip_intro_dismissal: Option<(u64, u64, u64)>,
     #[serde(skip_serializing)]
     pub watched: Option<WatchedBitField>,
     #[serde(skip_serializing)]
@@ -171,6 +178,20 @@ pub struct Player {
 
 impl<E: Env + 'static> UpdateWithCtx<E> for Player {
     fn update(&mut self, msg: &Msg, ctx: &Ctx) -> Effects {
+        match msg {
+            Msg::Action(Action::Load(ActionLoad::Player(_))) | Msg::Action(Action::Unload) => {
+                self.playback_generation = self.playback_generation.saturating_add(1);
+                self.skip_intro_playback = None;
+                self.skip_intro_dismissal = None;
+            }
+            Msg::Action(Action::Player(
+                ActionPlayer::Seek { time, duration, .. }
+                | ActionPlayer::TimeChanged { time, duration, .. },
+            )) if self.selected.is_some() => {
+                self.skip_intro_playback = Some((*time, *duration));
+            }
+            _ => {}
+        }
         let effects = match msg {
             Msg::Action(Action::Load(ActionLoad::Player(selected))) => {
                 let same_video = self.selected.as_ref().is_some_and(|previous| {
@@ -322,7 +343,8 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                 let watched_effects =
                     watched_update(&mut self.watched, &self.meta_item, &self.library_item);
 
-                let skip_gaps_effects = eq_update(&mut self.skip_gaps, None);
+                let skip_gaps_effects = eq_update(&mut self.skip_gaps, None)
+                    .join(eq_update(&mut self.intro_outro, None));
                 let intro_outro_update_effects = intro_outro_update::<E>(
                     &mut self.intro_outro,
                     &ctx.profile,
@@ -339,6 +361,7 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                     self.library_item.as_ref(),
                     self.series_info.as_ref(),
                     self.selected.as_ref(),
+                    self.playback_generation,
                     None,
                 );
 
@@ -461,7 +484,8 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                 let series_info_effects = eq_update(&mut self.series_info, None);
                 let library_item_effects = eq_update(&mut self.library_item, None);
                 let watched_effects = eq_update(&mut self.watched, None);
-                let skip_gaps_effects = eq_update(&mut self.skip_gaps, None);
+                let skip_gaps_effects = eq_update(&mut self.skip_gaps, None)
+                    .join(eq_update(&mut self.intro_outro, None));
                 let skip_segment_context_effects = eq_update(&mut self.skip_segment_context, None);
                 let skip_segment_candidates_effects =
                     eq_update(&mut self.skip_segment_candidates, vec![]);
@@ -637,6 +661,7 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                         Some(library_item),
                         self.series_info.as_ref(),
                         self.selected.as_ref(),
+                        self.playback_generation,
                         Some(*duration),
                     );
                     let resolved_skip_effects = apply_resolved_skip_segments(
@@ -790,6 +815,7 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                         Some(library_item),
                         self.series_info.as_ref(),
                         self.selected.as_ref(),
+                        self.playback_generation,
                         Some(*duration),
                     );
                     let resolved_skip_effects = apply_resolved_skip_segments(
@@ -1121,6 +1147,13 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                     .join(skip_gaps_effects)
             }
             Msg::Internal(Internal::SkipGapsResult(skip_gaps_request, result)) => {
+                if !self
+                    .skip_gaps
+                    .as_ref()
+                    .is_some_and(|(request, _)| request == skip_gaps_request)
+                {
+                    return Effects::none().unchanged();
+                }
                 let skip_gaps_next = match result.to_owned() {
                     Ok(response) => Loadable::Ready(response),
                     Err(err) => Loadable::Err(err),
@@ -1159,7 +1192,14 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                 if let Ok(candidates) = result {
                     self.skip_segment_candidates
                         .retain(|candidate| candidate.source != *source);
-                    self.skip_segment_candidates.extend(candidates.clone());
+                    self.skip_segment_candidates.extend(
+                        candidates
+                            .iter()
+                            .filter(|candidate| {
+                                valid_external_candidate(candidate, *source, context)
+                            })
+                            .cloned(),
+                    );
                     if !self.skip_segment_sources_loaded.contains(source) {
                         self.skip_segment_sources_loaded.push(*source);
                     }
@@ -1200,10 +1240,7 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                 let Some(entry) = result.as_ref().ok().and_then(|entry| entry.as_ref()) else {
                     return Effects::none().unchanged();
                 };
-                if entry.context != *context || entry.source != *source {
-                    return Effects::none().unchanged();
-                }
-                if E::now().signed_duration_since(entry.cached_at) > Duration::days(30) {
+                if !valid_skip_cache(entry, context, *source, E::now()) {
                     return skip_segment_cache_delete_effect::<E>(context.clone(), *source)
                         .map(Effects::one)
                         .unwrap_or_else(Effects::none)
@@ -1226,6 +1263,18 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                 )
             }
             Msg::Internal(Internal::SkipSegmentsCacheWriteResult(_)) => Effects::none().unchanged(),
+            Msg::Action(Action::Player(ActionPlayer::DismissSkipIntro {
+                generation,
+                from,
+                to,
+            })) => {
+                if self.skip_intro.as_ref().is_some_and(|state| {
+                    state.generation == *generation && state.from == *from && state.to == *to
+                }) {
+                    self.skip_intro_dismissal = Some((*generation, *from, *to));
+                }
+                Effects::none().unchanged()
+            }
             Msg::Internal(Internal::ProfileChanged) => {
                 if let Some(analytics_context) = &mut self.analytics_context {
                     analytics_context.has_trakt = ctx.profile.has_trakt::<E>();
@@ -1234,7 +1283,7 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
             }
             _ => Effects::none().unchanged(),
         };
-        if matches!(
+        let effects = if matches!(
             msg,
             Msg::Action(Action::Load(ActionLoad::Player(_)))
                 | Msg::Action(Action::Unload)
@@ -1246,7 +1295,29 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
             effects.join(live_update::<E>(self))
         } else {
             effects
-        }
+        };
+        let skip_intro = self
+            .selected
+            .as_ref()
+            .filter(|_| self.live.is_none() && !self.ended)
+            .and_then(|selected| selected.stream_request.as_ref())
+            .and_then(|request| {
+                let item = self.library_item.as_ref()?;
+                if item.is_live() || item.state.video_id.as_ref() != Some(&request.path.id) {
+                    return None;
+                }
+                let (time, duration) = self.skip_intro_playback?;
+                crate::models::skip_intro::state(
+                    self.intro_outro.as_ref().and_then(|v| v.intro.as_ref()),
+                    &request.path.id,
+                    self.playback_generation,
+                    time,
+                    duration,
+                    &ctx.profile.settings.skip_intro_mode,
+                    self.skip_intro_dismissal,
+                )
+            });
+        effects.join(eq_update(&mut self.skip_intro, skip_intro))
     }
 }
 
@@ -1843,6 +1914,7 @@ fn skip_segment_context(
     }
 
     Some(SkipSegmentContext {
+        playback_generation: 0,
         item_id: library_item.id.clone(),
         media_type: library_item.r#type.clone(),
         season: series_info.map(|info| info.season),
@@ -1913,8 +1985,10 @@ fn skip_segment_cache_write_effect<E: Env + 'static>(
     candidates: Vec<SkipSegmentCandidate>,
 ) -> Option<Effect> {
     let key = skip_segment_cache_key(&context, source)?;
+    let mut cache_context = context;
+    cache_context.playback_generation = 0;
     let entry = SkipSegmentCacheEntry {
-        context,
+        context: cache_context,
         source,
         candidates,
         cached_at: E::now(),
@@ -1953,6 +2027,7 @@ fn external_skip_segments_update<E: Env + 'static>(
     library_item: Option<&LibraryItem>,
     series_info: Option<&SeriesInfo>,
     selected: Option<&Selected>,
+    playback_generation: u64,
     playback_duration: Option<u64>,
 ) -> Effects {
     let selected_video_id = selected
@@ -1963,7 +2038,11 @@ fn external_skip_segments_update<E: Env + 'static>(
         series_info,
         selected_video_id,
         playback_duration,
-    );
+    )
+    .map(|mut context| {
+        context.playback_generation = playback_generation;
+        context
+    });
     if context_state == &next_context {
         return Effects::none().unchanged();
     }
@@ -1996,21 +2075,13 @@ fn apply_resolved_skip_segments(
     library_item: Option<&LibraryItem>,
     external_candidates: &[SkipSegmentCandidate],
 ) -> Effects {
-    let Some(library_item) = library_item else {
-        return Effects::none().unchanged();
+    let native = native_intro_outro(skip_gaps, library_item);
+    let Some(library_item) = library_item.filter(|item| item.state.duration > 0) else {
+        return eq_update(intro_outro, None);
     };
-    if library_item.state.duration == 0 || external_candidates.is_empty() {
-        return Effects::none().unchanged();
+    if external_candidates.is_empty() {
+        return eq_update(intro_outro, native);
     }
-
-    let has_external_intro =
-        resolve_skip_segment(SkipSegmentKind::Intro, external_candidates).is_some();
-    let has_external_outro =
-        resolve_skip_segment(SkipSegmentKind::Outro, external_candidates).is_some();
-    if !has_external_intro && !has_external_outro {
-        return Effects::none().unchanged();
-    }
-
     let mut candidates = external_candidates.to_vec();
     if let Some((_, Loadable::Ready(response))) = skip_gaps {
         candidates.extend(stremio_native_candidates(
@@ -2018,12 +2089,14 @@ fn apply_resolved_skip_segments(
             library_item.state.duration,
         ));
     }
-
-    let current = intro_outro.clone().unwrap_or(IntroOutro {
+    let baseline = native.unwrap_or(IntroOutro {
         intro: None,
         outro: None,
     });
-    let intro = if has_external_intro {
+    let intro = if external_candidates
+        .iter()
+        .any(|c| c.kind == SkipSegmentKind::Intro)
+    {
         resolve_skip_segment(SkipSegmentKind::Intro, &candidates).map(|segment| IntroData {
             from: segment.from_ms,
             to: segment.to_ms,
@@ -2032,15 +2105,56 @@ fn apply_resolved_skip_segments(
                 .then_some(segment.to_ms.abs_diff(segment.from_ms)),
         })
     } else {
-        current.intro
+        baseline.intro
     };
-    let outro = if has_external_outro {
+    let outro = if external_candidates
+        .iter()
+        .any(|c| c.kind == SkipSegmentKind::Outro)
+    {
         resolve_skip_segment(SkipSegmentKind::Outro, &candidates).map(|segment| segment.from_ms)
     } else {
-        current.outro
+        baseline.outro
     };
-
     eq_update(intro_outro, Some(IntroOutro { intro, outro }))
+}
+
+fn valid_external_candidate(
+    candidate: &SkipSegmentCandidate,
+    source: SkipSegmentSource,
+    context: &SkipSegmentContext,
+) -> bool {
+    source != SkipSegmentSource::StremioNative
+        && candidate.source == source
+        && context.duration_ms.is_some_and(|duration| {
+            candidate.end_ms > candidate.start_ms
+                && candidate.end_ms <= duration
+                && (candidate.kind != SkipSegmentKind::Intro || candidate.end_ms < duration)
+        })
+        && candidate.source_confidence.map_or(true, |confidence| {
+            confidence.is_finite() && (0.0..=1.0).contains(&confidence)
+        })
+}
+
+fn valid_skip_cache(
+    entry: &SkipSegmentCacheEntry,
+    context: &SkipSegmentContext,
+    source: SkipSegmentSource,
+    now: DateTime<Utc>,
+) -> bool {
+    let mut identity = context.clone();
+    identity.playback_generation = 0;
+    let mut cached_identity = entry.context.clone();
+    cached_identity.playback_generation = 0;
+    let age = now.signed_duration_since(entry.cached_at);
+    skip_segment_cache_source_key(source).is_some()
+        && entry.source == source
+        && cached_identity == identity
+        && age >= Duration::zero()
+        && age < Duration::days(30)
+        && entry
+            .candidates
+            .iter()
+            .all(|c| valid_external_candidate(c, source, context))
 }
 
 fn intro_outro_update<E: Env + 'static>(
@@ -2061,13 +2175,24 @@ fn intro_outro_update<E: Env + 'static>(
         skip_gaps,
     );
 
-    let intro_outro_effects = match (skip_gaps, library_item) {
+    let value = native_intro_outro(skip_gaps, library_item);
+    skip_gaps_effects.join(eq_update(intro_outro, value))
+}
+
+fn native_intro_outro(
+    skip_gaps: &Option<(SkipGapsRequest, Loadable<SkipGapsResponse, CtxError>)>,
+    library_item: Option<&LibraryItem>,
+) -> Option<IntroOutro> {
+    match (skip_gaps, library_item) {
         (Some((_, Loadable::Ready(response))), Some(library_item))
             if library_item.state.duration > 0 =>
         {
             let outro_time = {
                 let outro_durations = response.gaps.iter().filter_map(|(duration, skip_gaps)| {
-                    skip_gaps.outro.map(|outro| (duration, outro))
+                    skip_gaps
+                        .outro
+                        .filter(|outro| *duration > 0 && *outro > 0 && *outro < *duration)
+                        .map(|outro| (duration, outro))
                 });
 
                 let closest_duration = outro_durations.reduce(
@@ -2087,10 +2212,11 @@ fn intro_outro_update<E: Env + 'static>(
             };
 
             let intro_time = {
-                let intro_durations = response
-                    .gaps
-                    .iter()
-                    .filter(|(_duration, skip_gaps)| !skip_gaps.seek_history.is_empty());
+                let intro_durations = response.gaps.iter().filter(|(duration, skip_gaps)| {
+                    **duration > 0
+                        && strongest_seek_event(skip_gaps)
+                            .is_some_and(|event| event.to < **duration)
+                });
                 let closest_duration = intro_durations.reduce(
                     |(previous_duration, previous_skip_gaps),
                      (current_duration, current_skip_gaps)| {
@@ -2106,12 +2232,12 @@ fn intro_outro_update<E: Env + 'static>(
 
                 closest_duration.and_then(|(closest_duration, skip_gaps)| {
                 let duration_diff_in_secs = (library_item.state.duration.abs_diff(*closest_duration)).div(1000 * 10) / 10;
-                let duration_ration = Ratio::new(library_item.state.duration, *closest_duration);
+
                 // even though we checked for len() > 0 make sure we don't panic if somebody decides to remove that check!
                 let matched_intro = strongest_seek_event(skip_gaps).map(|seek_event| {
                     let intro_data = IntroData {
-                        from: (duration_ration * seek_event.from).to_integer(),
-                        to: (duration_ration * seek_event.to).to_integer(),
+                        from: ((library_item.state.duration as u128 * seek_event.from as u128) / *closest_duration as u128) as u64,
+                        to: ((library_item.state.duration as u128 * seek_event.to as u128) / *closest_duration as u128) as u64,
                         duration: if duration_diff_in_secs > 0 { Some(seek_event.to.abs_diff(seek_event.from)) } else { None }
                     };
                     tracing::debug!(?seek_event, ?intro_data, "Player: Intro match for event by duration with difference of {duration_diff_in_secs} seconds",);
@@ -2123,18 +2249,13 @@ fn intro_outro_update<E: Env + 'static>(
               })
             };
 
-            eq_update(
-                intro_outro,
-                Some(IntroOutro {
-                    intro: intro_time,
-                    outro: outro_time,
-                }),
-            )
+            Some(IntroOutro {
+                intro: intro_time,
+                outro: outro_time,
+            })
         }
-        _ => eq_update(intro_outro, None),
-    };
-
-    skip_gaps_effects.join(intro_outro_effects)
+        _ => None,
+    }
 }
 
 fn skip_gaps_update<E: Env + 'static>(
@@ -2471,3 +2592,7 @@ mod tests {
         assert_eq!(calculate_outro(&library_item, 11000, 32000), None);
     }
 }
+
+#[cfg(test)]
+#[path = "player_skip_delivery_tests.rs"]
+mod skip_delivery_tests;

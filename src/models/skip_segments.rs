@@ -62,7 +62,8 @@ pub fn stremio_native_candidates(
     let Some((source_duration, skip_gaps)) = response
         .gaps
         .iter()
-        .min_by_key(|(duration, _)| duration.abs_diff(target_duration_ms))
+        .filter(|(duration, _)| **duration > 0)
+        .min_by_key(|(duration, _)| (duration.abs_diff(target_duration_ms), **duration))
     else {
         return Vec::new();
     };
@@ -76,7 +77,8 @@ pub fn stremio_native_candidates(
     let specificity = native_specificity(&response.accuracy);
     let mut candidates = Vec::with_capacity(2);
 
-    if let Some(event) = strongest_seek_event(skip_gaps) {
+    if let Some(event) = strongest_seek_event(skip_gaps).filter(|event| event.to < *source_duration)
+    {
         candidates.push(SkipSegmentCandidate {
             kind: SkipSegmentKind::Intro,
             start_ms: scale_timestamp(event.from, *source_duration, target_duration_ms),
@@ -639,6 +641,7 @@ mod tests {
     #[test]
     fn skipdb_provider_url_uses_duration_seconds() {
         let context = SkipSegmentContext {
+            playback_generation: 0,
             item_id: "tt0903747".into(),
             media_type: "series".into(),
             season: Some(1),
@@ -734,6 +737,7 @@ mod tests {
     #[test]
     fn theintrodb_provider_url_uses_duration_milliseconds() {
         let context = SkipSegmentContext {
+            playback_generation: 0,
             item_id: "tt0903747".into(),
             media_type: "series".into(),
             season: Some(1),

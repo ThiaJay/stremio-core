@@ -58,6 +58,8 @@ pub struct ResolvedSkipSegment {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SkipSegmentContext {
+    #[serde(default)]
+    pub playback_generation: u64,
     pub item_id: String,
     pub media_type: String,
     pub season: Option<u32>,

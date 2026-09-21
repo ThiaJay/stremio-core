@@ -232,6 +232,12 @@ pub enum ActionLink {
 #[derive(Clone, Deserialize, Debug)]
 #[serde(tag = "action", content = "args")]
 pub enum ActionPlayer {
+    /// Dismiss or consume a generation-bound intro in the shared player model.
+    DismissSkipIntro {
+        generation: u64,
+        from: u64,
+        to: u64,
+    },
     /// Re-evaluate live programme metadata after activation or clock changes.
     RefreshLive,
     #[serde(rename_all = "camelCase")]

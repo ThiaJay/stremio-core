@@ -120,6 +120,7 @@ mod model {
         pub video_scale: Option<&'a VideoScale>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub intro_outro: Option<&'a stremio_core::types::player::IntroOutro>,
+        pub skip_intro: Option<&'a stremio_core::types::player::SkipIntroState>,
         pub title: Option<String>,
         pub addon: Option<model::DescriptorPreview<'a>>,
     }
@@ -338,6 +339,7 @@ pub fn serialize_player<E: stremio_core::runtime::Env + 'static>(
         subtitle_preference: player.subtitle_preference.as_ref(),
         video_scale: player.video_scale.as_ref(),
         intro_outro: player.intro_outro.as_ref(),
+        skip_intro: player.skip_intro.as_ref(),
         title: player.selected.as_ref().and_then(|selected| {
             player
                 .meta_item
