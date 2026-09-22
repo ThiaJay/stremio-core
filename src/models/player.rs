@@ -130,6 +130,7 @@ pub struct Player {
     pub video_scale: Option<VideoScale>,
     /// Core-owned automatic audio/video synchronisation state.
     pub av_sync: AvSyncState,
+    pub av_sync_v2: crate::types::player::av_sync_v2::Controller,
     /// Core-owned playback health and recovery state.
     pub playback_health: PlaybackHealthState,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -391,6 +392,43 @@ fn playback_health_update(
 
 impl<E: Env + 'static> UpdateWithCtx<E> for Player {
     fn update(&mut self, msg: &Msg, ctx: &Ctx) -> Effects {
+        let mut sync = self.av_sync_v2.clone();
+        match msg {
+            Msg::Action(Action::Load(ActionLoad::Player(_))) => sync.begin(),
+            Msg::Action(Action::Unload) => sync.close(),
+            Msg::Action(Action::Player(
+                ActionPlayer::Seek { .. }
+                | ActionPlayer::Ended
+                | ActionPlayer::PausedChanged { paused: true },
+            )) => sync.interrupt(),
+            Msg::Action(Action::Player(ActionPlayer::AvSyncV2Observed {
+                observation,
+                now_ms,
+            })) => {
+                sync.observe(
+                    observation,
+                    *now_ms,
+                    self.selected.is_some()
+                        && self.paused == Some(false)
+                        && !self.ended
+                        && self.playback_health.recovery.is_none(),
+                );
+                return eq_update(&mut self.av_sync_v2, sync);
+            }
+            Msg::Action(Action::Player(ActionPlayer::AvSyncV2Acknowledged {
+                acknowledgement,
+                now_ms,
+            })) => {
+                sync.acknowledge(acknowledgement, *now_ms);
+                return eq_update(&mut self.av_sync_v2, sync);
+            }
+            Msg::Action(Action::Player(ActionPlayer::AvSyncV2Tick { session_id, now_ms })) => {
+                sync.tick(*session_id, *now_ms);
+                return eq_update(&mut self.av_sync_v2, sync);
+            }
+            _ => {}
+        }
+        let sync_effects = eq_update(&mut self.av_sync_v2, sync);
         let effects = match msg {
             Msg::Action(Action::Load(ActionLoad::Player(selected))) => {
                 let same_video = self.selected.as_ref().is_some_and(|previous| {
@@ -1346,6 +1384,7 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
             }
             _ => Effects::none().unchanged(),
         };
+        let effects = effects.join(sync_effects);
         if matches!(
             msg,
             Msg::Action(Action::Load(ActionLoad::Player(_)))

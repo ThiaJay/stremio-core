@@ -119,6 +119,7 @@ mod model {
         pub subtitle_preference: Option<&'a SubtitlePreference>,
         pub video_scale: Option<&'a VideoScale>,
         pub av_sync: &'a AvSyncState,
+        pub av_sync_v2: &'a stremio_core::types::player::av_sync_v2::Controller,
         pub playback_health: &'a PlaybackHealthState,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub intro_outro: Option<&'a stremio_core::types::player::IntroOutro>,
@@ -340,6 +341,7 @@ pub fn serialize_player<E: stremio_core::runtime::Env + 'static>(
         subtitle_preference: player.subtitle_preference.as_ref(),
         video_scale: player.video_scale.as_ref(),
         av_sync: &player.av_sync,
+        av_sync_v2: &player.av_sync_v2,
         playback_health: &player.playback_health,
         intro_outro: player.intro_outro.as_ref(),
         title: player.selected.as_ref().and_then(|selected| {
