@@ -787,7 +787,6 @@ fn mark_video_as_unwatched_does_not_advance_video_id() {
     );
 }
 
-
 fn dispatch_seek(runtime: &Runtime<TestEnv, TestModel>, time: u64, duration: u64) {
     TestEnv::run(|| {
         runtime.dispatch(RuntimeAction {
@@ -885,8 +884,14 @@ fn seek_into_credits_then_ended_marks_series_episode_watched_before_advancing() 
         {
             let model = runtime.model().unwrap();
             let item = model.player.library_item.as_ref().unwrap();
-            assert_eq!(item.state.times_watched, 0, "seek alone must not mark watched");
-            assert_eq!(item.state.flagged_watched, 0, "seek alone must not flag watched");
+            assert_eq!(
+                item.state.times_watched, 0,
+                "seek alone must not mark watched"
+            );
+            assert_eq!(
+                item.state.flagged_watched, 0,
+                "seek alone must not flag watched"
+            );
         }
 
         dispatch_ended(&runtime);
@@ -956,8 +961,14 @@ fn seek_into_credits_then_ended_marks_movie_watched_and_clears_resume() {
     {
         let model = runtime.model().unwrap();
         let item = model.player.library_item.as_ref().unwrap();
-        assert_eq!(item.state.times_watched, 0, "seek alone must not mark watched");
-        assert_eq!(item.state.flagged_watched, 0, "seek alone must not flag watched");
+        assert_eq!(
+            item.state.times_watched, 0,
+            "seek alone must not mark watched"
+        );
+        assert_eq!(
+            item.state.flagged_watched, 0,
+            "seek alone must not flag watched"
+        );
     }
 
     dispatch_ended(&runtime);
