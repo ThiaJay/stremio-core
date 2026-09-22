@@ -1,8 +1,8 @@
 mod audio_preference;
 mod av_sync;
-mod playback_health;
 mod mark_video_as_watched;
 mod next_stream;
+mod playback_health;
 mod subtitle_preference;
 mod video_scale;
 
