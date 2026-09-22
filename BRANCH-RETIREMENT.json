@@ -1,0 +1,57 @@
+{
+  "schema": 1,
+  "updatedAt": "2026-09-22",
+  "successor": {
+    "branch": "development",
+    "governance": "ThiaJay/stremio-development-foundation",
+    "note": "Closed fork work is preserved through PR handovers, exact tip SHAs and Foundation lifecycle evidence."
+  },
+  "branches": [
+    {
+      "name": "automation/skip-intro-delivery-20260921",
+      "tip": "13396490d7770bea6da8d7cf276cd59575535851",
+      "reason": "Temporary Skip Intro delivery and promotion branch. Superseded by the closed hardened fork evidence and upstream disposition."
+    },
+    {
+      "name": "feat/skip-intro-provider-neutral-final",
+      "tip": "d6d374e161eae0fb5a0484e1d0bff83d1015719a",
+      "reason": "Completed provider-neutral Skip Intro fork implementation. Closed as preserved engineering evidence after upstream identified the existing native feature and did not adopt this path."
+    },
+    {
+      "name": "fix/mark-season-clears-stale-resume",
+      "tip": "36e2b88f4eb1fa6a0e60108fcc8d77164a6c65f8",
+      "reason": "Fully contained by current development after upstream merge of Stremio Core PR 1062 and release in Core Web 0.63.1."
+    },
+    {
+      "name": "fix/next-episode-unambiguous-fallback",
+      "tip": "6d665f325ff8eb9c68f40cab5d566994f71c65aa",
+      "reason": "Fork-only next-episode fallback evidence. Upstream rejected Core ownership, and the supported addon-side bingeGroup continuity is already live in the AIOStreams and Maelstrom adapter."
+    },
+    {
+      "name": "manual-watched-trakt-intent",
+      "tip": "43427b96d9f622392a10b4275312adf48e89ef89",
+      "reason": "Contains no commits ahead of current development. Manual watched Trakt ownership remains tracked externally in Stremio features issue 1305 and the Watch State Reference harness."
+    },
+    {
+      "name": "mark-watched-clears-resume",
+      "tip": "8b560b7bdb16121749c719ae4b32bded52cfe11c",
+      "reason": "Fully contained by current development after upstream merge of Stremio Core PR 1060 and release in Core Web 0.63.1."
+    },
+    {
+      "name": "validate/skip-intro-popup-final",
+      "tip": "7b10fa9541d846e01aca32d4d4204386049ef565",
+      "reason": "Temporary cross-platform Skip Intro validation branch superseded by the closed fork evidence record."
+    },
+    {
+      "name": "validation/next-episode-fallback-20260921",
+      "tip": "0bb4f5bf0d2fa79a4cba93a46e901d3a132cd933",
+      "reason": "Temporary next-episode fallback validation branch superseded by the preserved closed fork implementation and addon-side production solution."
+    },
+    {
+      "name": "validation/skip-intro-hardened-20260921",
+      "tip": "003217c9c79d2ade8ea67114c55fec1906f466cb",
+      "reason": "Temporary hardened Skip Intro validation branch superseded by the preserved closed fork implementation."
+    }
+  ],
+  "preservation": "Exact branch tips are recorded before deletion. Product and validation evidence remains in closed PR handovers, GitHub Actions history and the Foundation lifecycle authority."
+}
