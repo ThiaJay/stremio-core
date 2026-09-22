@@ -108,15 +108,17 @@ It must not send:
 
 No shared third-party API secret is embedded in clients.
 
-## Platform behaviour
+## Cross-platform behaviour
 
-WebAssembly clients use only browser-compatible provider access.
+All clients consume the same resolved Core segment state, action contract, timing boundaries, dismissal rules, priority rules and user preferences.
 
-Native clients may use additional independent providers where their APIs and licences permit it.
+Android TV is a visual and interaction reference for the contextual skip control, not a separate product path. The same contextual action must exist across TV, desktop, Web and mobile wherever the client can render the shared player state.
 
-All clients consume the same resolved Core segment state. Platform differences belong to presentation and media actuation, not evidence resolution.
+Platform-specific code must be limited to unavoidable input and rendering adaptation, such as remote focus, touch activation or pointer activation. It must not change feature availability, labels, timing semantics, evidence resolution, automatic-skip behaviour, dismissal behaviour or priority against other player UI.
 
-The target presentation is deliberately close to Stremio's established player language. On TV this means a compact, focusable contextual action consistent with the existing Android TV skip/end controls. On pointer/touch clients it remains a contextual action rather than a permanent control-bar button.
+WebAssembly clients may have different provider access constraints because of browser networking rules. Native clients may reach additional independent providers where their APIs and licences permit it. Those transport differences must converge into the same Core candidate model and resolved result.
+
+The target presentation is one unified contextual player control, derived from Stremio's established Android TV skip/end interaction pattern and adapted consistently across screen sizes and input methods. It is never a permanent control-bar feature and never a separate Android-only implementation.
 
 ## Accessibility and control
 
