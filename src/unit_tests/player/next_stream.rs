@@ -187,6 +187,41 @@ fn next_stream() {
         "next video has the matched next stream embedded"
     );
 
+    assert_eq!(
+        runtime
+            .model()
+            .unwrap()
+            .player
+            .library_item
+            .as_ref()
+            .unwrap()
+            .state
+            .time_offset,
+        50,
+        "preparing a next video must not mark it started"
+    );
+
+    TestEnv::run(|| {
+        runtime.dispatch(RuntimeAction {
+            field: None,
+            action: Action::Player(ActionPlayer::Ended),
+        });
+    });
+
+    assert_eq!(
+        runtime
+            .model()
+            .unwrap()
+            .player
+            .library_item
+            .as_ref()
+            .unwrap()
+            .state
+            .time_offset,
+        50,
+        "ending playback alone must not advance or mark the next video started"
+    );
+
     TestEnv::run(|| {
         runtime.dispatch(RuntimeAction {
             field: None,
