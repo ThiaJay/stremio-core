@@ -56,3 +56,22 @@ pub struct IntroData {
     /// and stream duration ([`LibraryItem.state.duration`]) > 0!
     pub duration: Option<u64>,
 }
+
+/// Portable resolved skip state. Clients perform seek_to through the normal media actuator.
+#[derive(Clone, Serialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SkipSegmentState {
+    pub kind: crate::types::skip_segments::SkipSegmentKind,
+    pub generation: u64,
+    pub video_id: String,
+    pub from: u64,
+    pub to: u64,
+    pub duration: u64,
+    pub mode: crate::types::profile::SkipIntroMode,
+    pub active: bool,
+    pub dismissed: bool,
+    pub seek_to: Option<u64>,
+}
+
+/// Transitional compatibility alias for clients that still consume the intro-only descriptor.
+pub type SkipIntroState = SkipSegmentState;

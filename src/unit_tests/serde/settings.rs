@@ -1,4 +1,4 @@
-use crate::types::profile::{FrameRateMatchingStrategy, Settings};
+use crate::types::profile::{FrameRateMatchingStrategy, Settings, SkipIntroMode};
 use chrono::{TimeZone, Utc};
 use serde_test::{assert_de_tokens, assert_tokens, Token};
 use url::Url;
@@ -20,6 +20,7 @@ fn settings() {
             video_mode: Some("video_mode".to_owned()),
             frame_rate_matching_strategy: FrameRateMatchingStrategy::Disabled,
             next_video_notification_duration: 30,
+            skip_intro_mode: SkipIntroMode::Ask,
             audio_passthrough: true,
             audio_language: Some("audio_language".to_owned()),
             secondary_audio_language: Some("secondary_audio_language".to_owned()),
@@ -51,7 +52,7 @@ fn settings() {
         &[
             Token::Struct {
                 name: "Settings",
-                len: 38,
+                len: 39,
             },
             Token::Str("interfaceLanguage"),
             Token::Str("interface_language"),
@@ -84,6 +85,11 @@ fn settings() {
             },
             Token::Str("nextVideoNotificationDuration"),
             Token::U32(30),
+            Token::Str("skipIntroMode"),
+            Token::UnitVariant {
+                name: "SkipIntroMode",
+                variant: "ask",
+            },
             Token::Str("audioPassthrough"),
             Token::Bool(true),
             Token::Str("audioLanguage"),
