@@ -120,6 +120,12 @@ WebAssembly clients may have different provider access constraints because of br
 
 The target presentation is one unified contextual player control, derived from Stremio's established Android TV skip/end interaction pattern and adapted consistently across screen sizes and input methods. It is never a permanent control-bar feature and never a separate Android-only implementation.
 
+## Profile compatibility
+
+The shared product setting is the skip-segment behaviour mode for intro, recap and credits.
+
+The current serialized profile field remains named `skipIntroMode` for backward compatibility with profiles and clients created before the generic segment model. That legacy wire name must not leak into new user-facing labels or narrow the semantics to intros. New client presentation should describe the general skip capability while reading and writing the compatible profile field until a separately versioned settings migration is justified.
+
 ## Accessibility and control
 
 - The prompt must be keyboard, remote and screen-reader reachable.
