@@ -345,7 +345,6 @@ fn model_dismissal_is_generation_bound_and_preference_updates_shared_target() {
     assert!(player.skip_segment_dismissal.is_none());
 }
 
-
 #[test]
 fn outro_at_media_end_remains_a_seek_segment_not_next_video_state() {
     let _guard = TestEnv::reset().unwrap();
@@ -368,7 +367,10 @@ fn outro_at_media_end_remains_a_seek_segment_not_next_video_state() {
         &Ctx::default(),
     );
 
-    let state = player.skip_segment.as_ref().expect("outro should be exposed");
+    let state = player
+        .skip_segment
+        .as_ref()
+        .expect("outro should be exposed");
     assert_eq!(state.kind, SkipSegmentKind::Outro);
     assert_eq!(state.seek_to, Some(100_000));
     assert_eq!(state.video_id, "tt0903747:1:5");
