@@ -183,7 +183,7 @@ fn av_sync_update(
     let transient = observation.buffering
         || observation.seeking
         || observation.refresh_rate_switching;
-    let absolute_offset = observation.offset_ms.unsigned_abs();
+    let absolute_offset = observation.offset_ms.checked_abs().unwrap_or(i64::MAX) as u64;
 
     if transient {
         *bad_samples = 0;
@@ -229,7 +229,7 @@ fn av_sync_update(
         );
     }
 
-    *bad_samples = bad_samples.saturating_add(1);
+    *bad_samples = (*bad_samples).saturating_add(1);
     if *bad_samples < AV_SYNC_PERSISTENT_SAMPLES {
         return eq_update(
             state,
