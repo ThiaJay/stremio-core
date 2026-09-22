@@ -297,10 +297,13 @@ fn model_dismissal_is_generation_bound_and_preference_updates_shared_target() {
             }),
             outro: None,
         }),
+        skip_segment_candidates: vec![candidate(SkipSegmentSource::IntroDb, 10_000)],
         ..Default::default()
     };
     let mut ctx = Ctx::default();
     update(&mut player, Msg::Internal(Internal::ProfileChanged), &ctx);
+    assert_eq!(player.skip_segment.as_ref().unwrap().kind, SkipSegmentKind::Intro);
+    assert_eq!(player.skip_segment.as_ref().unwrap().seek_to, Some(20_000));
     assert_eq!(player.skip_intro.as_ref().unwrap().seek_to, Some(20_000));
     update(
         &mut player,
@@ -332,10 +335,11 @@ fn model_dismissal_is_generation_bound_and_preference_updates_shared_target() {
     assert_eq!(json["skipIntro"]["videoId"], "tt0903747:1:5");
     assert_eq!(json["skipIntro"]["dismissed"], true);
     update(&mut player, Msg::Action(Action::Unload), &ctx);
+    assert!(player.skip_segment.is_none());
     assert!(player.skip_intro.is_none());
     assert!(player.intro_outro.is_none());
     assert!(player.skip_intro_playback.is_none());
-    assert!(player.skip_intro_dismissal.is_none());
+    assert!(player.skip_segment_dismissal.is_none());
 }
 
 #[test]
@@ -353,6 +357,7 @@ fn new_load_resets_descriptor_even_for_identical_source() {
         &Ctx::default(),
     );
     assert_eq!(player.playback_generation, 5);
+    assert!(player.skip_segment.is_none());
     assert!(player.skip_intro.is_none());
     assert!(player.skip_intro_playback.is_none());
 }
