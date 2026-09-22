@@ -235,6 +235,21 @@ pub enum ActionLink {
 #[derive(Clone, Deserialize, Debug)]
 #[serde(tag = "action", content = "args")]
 pub enum ActionPlayer {
+    #[serde(rename_all = "camelCase")]
+    AvSyncV2Observed {
+        observation: crate::types::player::av_sync_v2::Observation,
+        now_ms: u64,
+    },
+    #[serde(rename_all = "camelCase")]
+    AvSyncV2Acknowledged {
+        acknowledgement: crate::types::player::av_sync_v2::Acknowledgement,
+        now_ms: u64,
+    },
+    #[serde(rename_all = "camelCase")]
+    AvSyncV2Tick {
+        session_id: u64,
+        now_ms: u64,
+    },
     /// Dismiss or consume a generation-bound skip segment in the shared player model.
     DismissSkipSegment {
         generation: u64,

@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+pub mod av_sync_v2;
+
 /// Corrective action requested by Core when persistent A/V drift is detected.
 #[derive(Clone, Copy, Deserialize, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
