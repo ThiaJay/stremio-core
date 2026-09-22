@@ -8,9 +8,7 @@ use crate::{
         UpdateWithCtx,
     },
     types::{
-        player::{
-            PlaybackHealthObservation, PlaybackHealthStatus, PlaybackRecoveryAction,
-        },
+        player::{PlaybackHealthObservation, PlaybackHealthStatus, PlaybackRecoveryAction},
         resource::{Stream, StreamBehaviorHints, StreamSource},
     },
     unit_tests::TestEnv,
@@ -71,10 +69,16 @@ fn silent_dts_on_stable_video_prefers_audio_transcode() {
     sample.audio_present = false;
 
     report(&mut player, &ctx, sample.clone());
-    assert_eq!(player.playback_health.status, PlaybackHealthStatus::Monitoring);
+    assert_eq!(
+        player.playback_health.status,
+        PlaybackHealthStatus::Monitoring
+    );
 
     report(&mut player, &ctx, sample);
-    assert_eq!(player.playback_health.status, PlaybackHealthStatus::Recovering);
+    assert_eq!(
+        player.playback_health.status,
+        PlaybackHealthStatus::Recovering
+    );
     assert_eq!(
         player.playback_health.recovery,
         Some(PlaybackRecoveryAction::TranscodeAudio)
@@ -129,7 +133,10 @@ fn audio_fixed_with_stuttering_video_is_not_accepted_as_recovered() {
     report(&mut player, &ctx, vlc.clone());
     report(&mut player, &ctx, vlc);
 
-    assert_eq!(player.playback_health.status, PlaybackHealthStatus::Recovering);
+    assert_eq!(
+        player.playback_health.status,
+        PlaybackHealthStatus::Recovering
+    );
     assert_eq!(
         player.playback_health.recovery,
         Some(PlaybackRecoveryAction::RestoreStableVideoAndTranscodeAudio)
