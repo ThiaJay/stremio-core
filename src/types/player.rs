@@ -63,6 +63,90 @@ impl Default for AvSyncState {
     }
 }
 
+/// Recovery requested by Core after a persistent playback health failure.
+#[derive(Clone, Copy, Deserialize, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PlaybackRecoveryAction {
+    /// Keep the current stable video path and make the audio compatible locally.
+    TranscodeAudio,
+    /// Try another playback engine for the same source.
+    SwitchPlaybackEngine,
+    /// Return to a previously stable video path and make its audio compatible.
+    RestoreStableVideoAndTranscodeAudio,
+    /// Keep the current title and move to a more compatible source only as a last resort.
+    SwitchStream,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PlaybackHealthStatus {
+    Healthy,
+    Monitoring,
+    Recovering,
+    Exhausted,
+}
+
+/// Health sample reported by a playback backend.
+///
+/// `audio_present` describes decoded audio activity before user volume or mute is
+/// applied. `video_stable` describes sustained presentation rather than a single
+/// rendered frame. Clients should set `transient` during startup, buffering,
+/// seeking or refresh-rate switching so Core does not react to expected disruption.
+#[derive(Clone, Deserialize, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaybackHealthObservation {
+    #[serde(default)]
+    pub engine: Option<String>,
+    #[serde(default)]
+    pub audio_codec: Option<String>,
+    #[serde(default)]
+    pub audio_expected: bool,
+    #[serde(default)]
+    pub audio_present: bool,
+    #[serde(default = "default_true")]
+    pub video_stable: bool,
+    #[serde(default)]
+    pub transient: bool,
+    #[serde(default)]
+    pub can_transcode_audio: bool,
+    #[serde(default)]
+    pub can_switch_engine: bool,
+    #[serde(default)]
+    pub can_restore_stable_video: bool,
+    #[serde(default)]
+    pub can_switch_stream: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Cross-platform playback health and recovery state owned by Core.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaybackHealthState {
+    pub status: PlaybackHealthStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recovery: Option<PlaybackRecoveryAction>,
+    pub generation: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub engine: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio_codec: Option<String>,
+}
+
+impl Default for PlaybackHealthState {
+    fn default() -> Self {
+        Self {
+            status: PlaybackHealthStatus::Healthy,
+            recovery: None,
+            generation: 0,
+            engine: None,
+            audio_codec: None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Deserialize, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum VideoScale {
