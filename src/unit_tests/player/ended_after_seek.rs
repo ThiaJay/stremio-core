@@ -223,7 +223,10 @@ fn seek_to_end_then_ended_marks_series_episode_watched_before_resume_cleanup() {
     let model = runtime.model().unwrap();
     let item = model.ctx.library.items.get("tt123456").unwrap();
     let videos = vec![video(1, 1), video(1, 2)];
-    assert!(item.state.watched_bitfield(&videos).get_video("tt123456:1:1"));
+    assert!(item
+        .state
+        .watched_bitfield(&videos)
+        .get_video("tt123456:1:1"));
     assert_eq!(item.state.video_id.as_deref(), Some("tt123456:1:2"));
     assert_eq!(item.state.time_offset, 1);
 }
