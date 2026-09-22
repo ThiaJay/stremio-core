@@ -2662,7 +2662,40 @@
 <a href="#2661" id="2661">2661</a>
 <a href="#2662" id="2662">2662</a>
 <a href="#2663" id="2663">2663</a>
-<a href="#2664" id="2664">2664</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::marker::PhantomData;
+<a href="#2664" id="2664">2664</a>
+<a href="#2665" id="2665">2665</a>
+<a href="#2666" id="2666">2666</a>
+<a href="#2667" id="2667">2667</a>
+<a href="#2668" id="2668">2668</a>
+<a href="#2669" id="2669">2669</a>
+<a href="#2670" id="2670">2670</a>
+<a href="#2671" id="2671">2671</a>
+<a href="#2672" id="2672">2672</a>
+<a href="#2673" id="2673">2673</a>
+<a href="#2674" id="2674">2674</a>
+<a href="#2675" id="2675">2675</a>
+<a href="#2676" id="2676">2676</a>
+<a href="#2677" id="2677">2677</a>
+<a href="#2678" id="2678">2678</a>
+<a href="#2679" id="2679">2679</a>
+<a href="#2680" id="2680">2680</a>
+<a href="#2681" id="2681">2681</a>
+<a href="#2682" id="2682">2682</a>
+<a href="#2683" id="2683">2683</a>
+<a href="#2684" id="2684">2684</a>
+<a href="#2685" id="2685">2685</a>
+<a href="#2686" id="2686">2686</a>
+<a href="#2687" id="2687">2687</a>
+<a href="#2688" id="2688">2688</a>
+<a href="#2689" id="2689">2689</a>
+<a href="#2690" id="2690">2690</a>
+<a href="#2691" id="2691">2691</a>
+<a href="#2692" id="2692">2692</a>
+<a href="#2693" id="2693">2693</a>
+<a href="#2694" id="2694">2694</a>
+<a href="#2695" id="2695">2695</a>
+<a href="#2696" id="2696">2696</a>
+<a href="#2697" id="2697">2697</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::marker::PhantomData;
 <span class="kw">use </span>std::ops::Div;
 
 <span class="kw">use </span>base64::Engine;
@@ -2804,6 +2837,9 @@
     </span><span class="kw">pub </span>skip_intro_playback: <span class="prelude-ty">Option</span>&lt;(u64, u64)&gt;,
     <span class="attr">#[serde(skip_serializing)]
     </span><span class="kw">pub </span>skip_segment_dismissal: <span class="prelude-ty">Option</span>&lt;(u64, SkipSegmentKind, u64, u64)&gt;,
+    <span class="doccomment">/// Consumed segments for this playback lifecycle only, bounded to 64 entries.
+    </span><span class="attr">#[serde(skip_serializing)]
+    </span><span class="kw">pub </span>skip_segment_dismissals: Vec&lt;(u64, SkipSegmentKind, u64, u64)&gt;,
     <span class="attr">#[serde(skip_serializing)]
     </span><span class="kw">pub </span>watched: <span class="prelude-ty">Option</span>&lt;WatchedBitField&gt;,
     <span class="attr">#[serde(skip_serializing)]
@@ -2849,6 +2885,7 @@
                 <span class="self">self</span>.playback_generation = <span class="self">self</span>.playback_generation.saturating_add(<span class="number">1</span>);
                 <span class="self">self</span>.skip_intro_playback = <span class="prelude-val">None</span>;
                 <span class="self">self</span>.skip_segment_dismissal = <span class="prelude-val">None</span>;
+                <span class="self">self</span>.skip_segment_dismissals.clear();
             }
             Msg::Action(Action::Player(
                 ActionPlayer::Seek { time, duration, .. }
@@ -3982,6 +4019,22 @@
         } <span class="kw">else </span>{
             effects
         };
+        <span class="comment">// Preserve earlier consumed segments when a later segment is dismissed.
+        // Invalid dismissal messages cannot insert a new identity.
+        </span><span class="kw">if </span><span class="macro">matches!</span>(
+            msg,
+            Msg::Action(Action::Player(
+                ActionPlayer::DismissSkipSegment { .. } | ActionPlayer::DismissSkipIntro { .. }
+            ))
+        ) {
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(identity) = <span class="self">self</span>.skip_segment_dismissal {
+                <span class="kw">if </span><span class="self">self</span>.skip_segment_dismissals.len() &lt; <span class="number">64
+                    </span>&amp;&amp; !<span class="self">self</span>.skip_segment_dismissals.contains(<span class="kw-2">&amp;</span>identity)
+                {
+                    <span class="self">self</span>.skip_segment_dismissals.push(identity);
+                }
+            }
+        }
         <span class="kw">let </span>skip_segment = <span class="self">self
             </span>.selected
             .as_ref()
@@ -4001,6 +4054,19 @@
                 .into_iter()
                 .find(|segment| time &gt;= segment.from_ms &amp;&amp; time &lt; segment.to_ms)
                 .and_then(|segment| {
+                    <span class="kw">let </span>identity = (
+                        <span class="self">self</span>.playback_generation,
+                        segment.kind,
+                        segment.from_ms,
+                        segment.to_ms,
+                    );
+                    <span class="kw">let </span>dismissal = <span class="kw">if </span><span class="self">self</span>.skip_segment_dismissals.contains(<span class="kw-2">&amp;</span>identity)
+                        || <span class="self">self</span>.skip_segment_dismissals.len() &gt;= <span class="number">64
+                    </span>{
+                        <span class="prelude-val">Some</span>(identity)
+                    } <span class="kw">else </span>{
+                        <span class="self">self</span>.skip_segment_dismissal
+                    };
                     <span class="kw">crate</span>::models::skip_intro::state(
                         segment.kind,
                         segment.from_ms,
@@ -4010,7 +4076,7 @@
                         time,
                         duration,
                         <span class="kw-2">&amp;</span>ctx.profile.settings.skip_intro_mode,
-                        <span class="self">self</span>.skip_segment_dismissal,
+                        dismissal,
                     )
                 })
             });
