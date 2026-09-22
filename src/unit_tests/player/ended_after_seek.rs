@@ -126,7 +126,7 @@ fn fetch_handler(request: Request) -> TryEnvFuture<Box<dyn Any + Send>> {
     }
 }
 
-fn runtime_with(item: LibraryItem) -> Runtime<TestEnv, TestModel> {
+fn runtime_with(item: LibraryItem) -> (Runtime<TestEnv, TestModel>, impl std::any::Any) {
     let id = item.id.clone();
     Runtime::<TestEnv, _>::new(
         TestModel {
@@ -142,7 +142,6 @@ fn runtime_with(item: LibraryItem) -> Runtime<TestEnv, TestModel> {
         vec![],
         1000,
     )
-    .0
 }
 
 fn load(runtime: &Runtime<TestEnv, TestModel>, kind: &str, meta_id: &str, video_id: &str) {
@@ -194,7 +193,7 @@ fn unload(runtime: &Runtime<TestEnv, TestModel>) {
 fn seek_to_end_then_ended_marks_series_episode_watched_before_resume_cleanup() {
     let _env_mutex = TestEnv::reset().expect("exclusive TestEnv");
     *FETCH_HANDLER.write().unwrap() = Box::new(fetch_handler);
-    let runtime = runtime_with(item("tt123456", "series", "tt123456:1:1"));
+    let (runtime, _rx) = runtime_with(item("tt123456", "series", "tt123456:1:1"));
 
     load(&runtime, "series", "tt123456", "tt123456:1:1");
     seek(&runtime);
@@ -235,7 +234,7 @@ fn seek_to_end_then_ended_marks_series_episode_watched_before_resume_cleanup() {
 fn seek_to_end_then_ended_marks_movie_watched_before_resume_cleanup() {
     let _env_mutex = TestEnv::reset().expect("exclusive TestEnv");
     *FETCH_HANDLER.write().unwrap() = Box::new(fetch_handler);
-    let runtime = runtime_with(item("tt654321", "movie", "tt654321"));
+    let (runtime, _rx) = runtime_with(item("tt654321", "movie", "tt654321"));
 
     load(&runtime, "movie", "tt654321", "tt654321");
     seek(&runtime);
@@ -271,7 +270,7 @@ fn seek_to_end_then_ended_marks_movie_watched_before_resume_cleanup() {
 fn seek_to_end_without_ended_does_not_mark_watched() {
     let _env_mutex = TestEnv::reset().expect("exclusive TestEnv");
     *FETCH_HANDLER.write().unwrap() = Box::new(fetch_handler);
-    let runtime = runtime_with(item("tt654321", "movie", "tt654321"));
+    let (runtime, _rx) = runtime_with(item("tt654321", "movie", "tt654321"));
 
     load(&runtime, "movie", "tt654321", "tt654321");
     seek(&runtime);
