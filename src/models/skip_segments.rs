@@ -1,11 +1,16 @@
+#[cfg(not(test))]
 use futures::FutureExt;
+#[cfg(not(test))]
 use http::Request;
 use serde::Deserialize;
 use std::cmp::Ordering;
 use url::Url;
 
+#[cfg(not(test))]
 use crate::runtime::msg::{Internal, Msg};
-use crate::runtime::{Effect, EffectFuture, Env, EnvFutureExt};
+#[cfg(not(test))]
+use crate::runtime::{EffectFuture, EnvFutureExt};
+use crate::runtime::{Effect, Env};
 
 use crate::types::{
     api::{SeekEvent, SkipGaps, SkipGapsResponse},
