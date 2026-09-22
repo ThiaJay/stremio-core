@@ -1,0 +1,3 @@
+1c80d1010ed55ddedaada0fd45208bd584eb5543ef32fc55e8cd6ae8507df21f  core-release.tgz
+80d6a21ab2c82dac15d5f503e4b40cace32ca4bd8680126deba936fa3c5c30f2  core-development.tgz
+24051b121bbffaf56ae38b984b354b61f1681ecea44f668f56b371ea535d2f09  tested-source.patch

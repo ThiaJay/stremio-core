@@ -1,0 +1,176 @@
+diff --git a/src/models/player.rs b/src/models/player.rs
+index 93ca16a..979491c 100644
+--- a/src/models/player.rs
++++ b/src/models/player.rs
+@@ -140,6 +140,9 @@ pub struct Player {
+     pub skip_intro_playback: Option<(u64, u64)>,
+     #[serde(skip_serializing)]
+     pub skip_segment_dismissal: Option<(u64, SkipSegmentKind, u64, u64)>,
++    /// Consumed segments for this playback lifecycle only, bounded to 64 entries.
++    #[serde(skip_serializing)]
++    pub skip_segment_dismissals: Vec<(u64, SkipSegmentKind, u64, u64)>,
+     #[serde(skip_serializing)]
+     pub watched: Option<WatchedBitField>,
+     #[serde(skip_serializing)]
+@@ -185,6 +188,7 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
+                 self.playback_generation = self.playback_generation.saturating_add(1);
+                 self.skip_intro_playback = None;
+                 self.skip_segment_dismissal = None;
++                self.skip_segment_dismissals.clear();
+             }
+             Msg::Action(Action::Player(
+                 ActionPlayer::Seek { time, duration, .. }
+@@ -1318,6 +1322,22 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
+         } else {
+             effects
+         };
++        // Preserve earlier consumed segments when a later segment is dismissed.
++        // Invalid dismissal messages cannot insert a new identity.
++        if matches!(
++            msg,
++            Msg::Action(Action::Player(
++                ActionPlayer::DismissSkipSegment { .. } | ActionPlayer::DismissSkipIntro { .. }
++            ))
++        ) {
++            if let Some(identity) = self.skip_segment_dismissal {
++                if self.skip_segment_dismissals.len() < 64
++                    && !self.skip_segment_dismissals.contains(&identity)
++                {
++                    self.skip_segment_dismissals.push(identity);
++                }
++            }
++        }
+         let skip_segment = self
+             .selected
+             .as_ref()
+@@ -1337,6 +1357,19 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
+                 .into_iter()
+                 .find(|segment| time >= segment.from_ms && time < segment.to_ms)
+                 .and_then(|segment| {
++                    let identity = (
++                        self.playback_generation,
++                        segment.kind,
++                        segment.from_ms,
++                        segment.to_ms,
++                    );
++                    let dismissal = if self.skip_segment_dismissals.contains(&identity)
++                        || self.skip_segment_dismissals.len() >= 64
++                    {
++                        Some(identity)
++                    } else {
++                        self.skip_segment_dismissal
++                    };
+                     crate::models::skip_intro::state(
+                         segment.kind,
+                         segment.from_ms,
+@@ -1346,7 +1379,7 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
+                         time,
+                         duration,
+                         &ctx.profile.settings.skip_intro_mode,
+-                        self.skip_segment_dismissal,
++                        dismissal,
+                     )
+                 })
+             });
+diff --git a/src/models/player_skip_delivery_tests.rs b/src/models/player_skip_delivery_tests.rs
+index abbcaf9..15185ca 100644
+--- a/src/models/player_skip_delivery_tests.rs
++++ b/src/models/player_skip_delivery_tests.rs
+@@ -396,3 +396,97 @@ fn invalid_native_durations_cannot_panic_or_finish_episode() {
+     };
+     assert!(stremio_native_candidates(&response, 100_000).is_empty());
+ }
++
++#[test]
++fn runtime_consumed_recap_stays_dismissed_after_intro_and_rewind() {
++    let _guard = TestEnv::reset().unwrap();
++    let mut recap = candidate(SkipSegmentSource::IntroDb, 1_000);
++    recap.kind = SkipSegmentKind::Recap;
++    recap.end_ms = 7_000;
++    let intro = candidate(SkipSegmentSource::IntroDb, 10_000);
++    let mut player = Player {
++        selected: Some(selected()),
++        library_item: Some(item()),
++        playback_generation: 7,
++        skip_intro_playback: Some((3_000, 100_000)),
++        skip_segment_candidates: vec![recap, intro],
++        ..Default::default()
++    };
++    let mut ctx = Ctx::default();
++    ctx.profile.settings.skip_intro_mode = SkipIntroMode::Always;
++    update(&mut player, Msg::Internal(Internal::ProfileChanged), &ctx);
++    assert_eq!(player.skip_segment.as_ref().unwrap().seek_to, Some(7_000));
++    update(
++        &mut player,
++        Msg::Action(Action::Player(ActionPlayer::DismissSkipSegment {
++            generation: 7,
++            kind: SkipSegmentKind::Recap,
++            from: 1_000,
++            to: 7_000,
++        })),
++        &ctx,
++    );
++    player.skip_intro_playback = Some((15_000, 100_000));
++    update(&mut player, Msg::Internal(Internal::ProfileChanged), &ctx);
++    assert_eq!(player.skip_segment.as_ref().unwrap().seek_to, Some(20_000));
++    update(
++        &mut player,
++        Msg::Action(Action::Player(ActionPlayer::DismissSkipSegment {
++            generation: 7,
++            kind: SkipSegmentKind::Intro,
++            from: 10_000,
++            to: 20_000,
++        })),
++        &ctx,
++    );
++    player.skip_intro_playback = Some((3_000, 100_000));
++    update(&mut player, Msg::Internal(Internal::ProfileChanged), &ctx);
++    assert_eq!(
++        player.skip_segment.as_ref().unwrap().seek_to,
++        None,
++        "Consuming an intro must not forget the consumed recap in the same playback lifecycle"
++    );
++    ctx.profile.settings.skip_intro_mode = SkipIntroMode::Ask;
++    update(&mut player, Msg::Internal(Internal::ProfileChanged), &ctx);
++    assert!(player.skip_segment.as_ref().unwrap().dismissed);
++    update(&mut player, Msg::Action(Action::Unload), &ctx);
++    assert!(player.skip_segment.is_none());
++}
++
++#[test]
++fn runtime_dismissal_history_is_bounded_and_resets_on_reload() {
++    let _guard = TestEnv::reset().unwrap();
++    let mut player = Player {
++        selected: Some(selected()),
++        library_item: Some(item()),
++        playback_generation: 4,
++        skip_intro_playback: Some((15_000, 100_000)),
++        ..Default::default()
++    };
++    let ctx = Ctx::default();
++    for index in 0..65 {
++        let start = 10_000 + index;
++        player.skip_segment_candidates = vec![candidate(SkipSegmentSource::IntroDb, start)];
++        update(&mut player, Msg::Internal(Internal::ProfileChanged), &ctx);
++        let state = player.skip_segment.as_ref().unwrap();
++        assert_eq!(state.seek_to.is_some(), index < 64);
++        update(
++            &mut player,
++            Msg::Action(Action::Player(ActionPlayer::DismissSkipSegment {
++                generation: 4,
++                kind: SkipSegmentKind::Intro,
++                from: start,
++                to: start + 10_000,
++            })),
++            &ctx,
++        );
++    }
++    assert_eq!(player.skip_segment_dismissals.len(), 64);
++    update(
++        &mut player,
++        Msg::Action(Action::Load(ActionLoad::Player(Box::new(selected())))),
++        &ctx,
++    );
++    assert!(player.skip_segment_dismissals.is_empty());
++    assert_eq!(player.playback_generation, 5);
++}
