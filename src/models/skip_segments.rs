@@ -1096,5 +1096,4 @@ mod tests {
         assert_eq!(resolved.from_ms, 1_800_000);
         assert_eq!(resolved.to_ms, 1_900_000);
     }
-
 }
