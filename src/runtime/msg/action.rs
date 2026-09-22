@@ -20,7 +20,7 @@ use crate::{
         addon::Descriptor,
         api::AuthRequest,
         library::LibraryItemId,
-        player::{AvSyncObservation, AudioPreference, SubtitlePreference, VideoScale},
+        player::{AudioPreference, AvSyncObservation, SubtitlePreference, VideoScale},
         profile::{AuthKey, Password, Settings as ProfileSettings},
         rating::Rating,
         resource::{MetaItemId, MetaItemPreview, Video},
