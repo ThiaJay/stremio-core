@@ -11,7 +11,7 @@ use stremio_core::models::player::Player;
 use stremio_core::models::streaming_server::StreamingServer;
 use stremio_core::types::{
     addon::{ResourcePath, ResourceRequest},
-    player::{AudioPreference, SubtitlePreference, VideoScale},
+    player::{AvSyncState, AudioPreference, SubtitlePreference, VideoScale},
     streams::StreamItemState,
 };
 
@@ -118,6 +118,7 @@ mod model {
         pub audio_preference: Option<&'a AudioPreference>,
         pub subtitle_preference: Option<&'a SubtitlePreference>,
         pub video_scale: Option<&'a VideoScale>,
+        pub av_sync: &'a AvSyncState,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub intro_outro: Option<&'a stremio_core::types::player::IntroOutro>,
         pub title: Option<String>,
@@ -337,6 +338,7 @@ pub fn serialize_player<E: stremio_core::runtime::Env + 'static>(
         audio_preference: player.audio_preference.as_ref(),
         subtitle_preference: player.subtitle_preference.as_ref(),
         video_scale: player.video_scale.as_ref(),
+        av_sync: &player.av_sync,
         intro_outro: player.intro_outro.as_ref(),
         title: player.selected.as_ref().and_then(|selected| {
             player
