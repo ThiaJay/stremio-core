@@ -8,9 +8,9 @@ use url::Url;
 
 #[cfg(not(test))]
 use crate::runtime::msg::{Internal, Msg};
+use crate::runtime::{Effect, Env};
 #[cfg(not(test))]
 use crate::runtime::{EffectFuture, EnvFutureExt};
-use crate::runtime::{Effect, Env};
 
 use crate::types::{
     api::{SeekEvent, SkipGaps, SkipGapsResponse},
