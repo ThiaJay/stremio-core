@@ -185,7 +185,10 @@ fn transient_startup_does_not_trigger_recovery() {
         report(&mut player, &ctx, sample.clone());
     }
 
-    assert_eq!(player.playback_health.status, PlaybackHealthStatus::Monitoring);
+    assert_eq!(
+        player.playback_health.status,
+        PlaybackHealthStatus::Monitoring
+    );
     assert_eq!(player.playback_health.recovery, None);
     assert_eq!(player.playback_health.generation, 0);
 }
