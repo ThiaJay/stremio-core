@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["SubtitleSource","VideoScale"],"struct":["AudioPreference","IntroData","IntroOutro","SkipSegmentState","SubtitlePreference"],"type":["SkipIntroState"]};
+window.SIDEBAR_ITEMS = {"enum":["AvSyncCorrection","AvSyncStatus","PlaybackHealthStatus","PlaybackRecoveryAction","SubtitleSource","VideoScale"],"fn":["default_true"],"mod":["av_sync_v2"],"struct":["AudioPreference","AvSyncObservation","AvSyncState","IntroData","IntroOutro","PlaybackHealthObservation","PlaybackHealthState","SkipSegmentState","SubtitlePreference"],"type":["SkipIntroState"]};

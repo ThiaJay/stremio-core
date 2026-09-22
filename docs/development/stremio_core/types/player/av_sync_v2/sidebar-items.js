@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["COOLDOWN_MS","FRESH_MS","MAX_SAFE","MIN_INTERVAL_MS","PERSIST_MS","SETTLE_MS"],"enum":["Correction","Status"],"struct":["Acknowledgement","Controller","Observation","Request"]};
