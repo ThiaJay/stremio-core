@@ -136,6 +136,17 @@ jobs:
         if: ${{ ! startsWith(github.ref, 'refs/pull/') }} 
         working-directory: stremio-core-web
         run: mv ./*.tgz ./build/${{ github.ref_name }}/dev
+
+      - name: Write package integrity manifests
+        if: ${{ ! startsWith(github.ref, 'refs/pull/') }}
+        working-directory: stremio-core-web
+        shell: bash
+        run: |
+          set -euo pipefail
+          for archive in ./build/${{ github.ref_name }}/*.tgz ./build/${{ github.ref_name }}/dev/*.tgz; do
+            digest="$(openssl dgst -sha512 -binary "$archive" | openssl base64 -A)"
+            printf 'sha512-%s\n' "$digest" > "$archive.sha512"
+          done
         
       - name: Deploy gh-pages
         if: ${{ ! startsWith(github.ref, 'refs/pull/')  &&  github.actor != 'dependabot[bot]' }}
