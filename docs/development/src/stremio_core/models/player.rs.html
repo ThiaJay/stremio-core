@@ -2995,7 +2995,70 @@
 <a href="#2994" id="2994">2994</a>
 <a href="#2995" id="2995">2995</a>
 <a href="#2996" id="2996">2996</a>
-<a href="#2997" id="2997">2997</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::marker::PhantomData;
+<a href="#2997" id="2997">2997</a>
+<a href="#2998" id="2998">2998</a>
+<a href="#2999" id="2999">2999</a>
+<a href="#3000" id="3000">3000</a>
+<a href="#3001" id="3001">3001</a>
+<a href="#3002" id="3002">3002</a>
+<a href="#3003" id="3003">3003</a>
+<a href="#3004" id="3004">3004</a>
+<a href="#3005" id="3005">3005</a>
+<a href="#3006" id="3006">3006</a>
+<a href="#3007" id="3007">3007</a>
+<a href="#3008" id="3008">3008</a>
+<a href="#3009" id="3009">3009</a>
+<a href="#3010" id="3010">3010</a>
+<a href="#3011" id="3011">3011</a>
+<a href="#3012" id="3012">3012</a>
+<a href="#3013" id="3013">3013</a>
+<a href="#3014" id="3014">3014</a>
+<a href="#3015" id="3015">3015</a>
+<a href="#3016" id="3016">3016</a>
+<a href="#3017" id="3017">3017</a>
+<a href="#3018" id="3018">3018</a>
+<a href="#3019" id="3019">3019</a>
+<a href="#3020" id="3020">3020</a>
+<a href="#3021" id="3021">3021</a>
+<a href="#3022" id="3022">3022</a>
+<a href="#3023" id="3023">3023</a>
+<a href="#3024" id="3024">3024</a>
+<a href="#3025" id="3025">3025</a>
+<a href="#3026" id="3026">3026</a>
+<a href="#3027" id="3027">3027</a>
+<a href="#3028" id="3028">3028</a>
+<a href="#3029" id="3029">3029</a>
+<a href="#3030" id="3030">3030</a>
+<a href="#3031" id="3031">3031</a>
+<a href="#3032" id="3032">3032</a>
+<a href="#3033" id="3033">3033</a>
+<a href="#3034" id="3034">3034</a>
+<a href="#3035" id="3035">3035</a>
+<a href="#3036" id="3036">3036</a>
+<a href="#3037" id="3037">3037</a>
+<a href="#3038" id="3038">3038</a>
+<a href="#3039" id="3039">3039</a>
+<a href="#3040" id="3040">3040</a>
+<a href="#3041" id="3041">3041</a>
+<a href="#3042" id="3042">3042</a>
+<a href="#3043" id="3043">3043</a>
+<a href="#3044" id="3044">3044</a>
+<a href="#3045" id="3045">3045</a>
+<a href="#3046" id="3046">3046</a>
+<a href="#3047" id="3047">3047</a>
+<a href="#3048" id="3048">3048</a>
+<a href="#3049" id="3049">3049</a>
+<a href="#3050" id="3050">3050</a>
+<a href="#3051" id="3051">3051</a>
+<a href="#3052" id="3052">3052</a>
+<a href="#3053" id="3053">3053</a>
+<a href="#3054" id="3054">3054</a>
+<a href="#3055" id="3055">3055</a>
+<a href="#3056" id="3056">3056</a>
+<a href="#3057" id="3057">3057</a>
+<a href="#3058" id="3058">3058</a>
+<a href="#3059" id="3059">3059</a>
+<a href="#3060" id="3060">3060</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::marker::PhantomData;
 <span class="kw">use </span>std::ops::Div;
 
 <span class="kw">use </span>base64::Engine;
@@ -4214,11 +4277,34 @@
             }
             Msg::Action(Action::Player(ActionPlayer::Ended)) <span class="kw">if </span><span class="self">self</span>.selected.is_some() =&gt; {
                 <span class="self">self</span>.ended = <span class="bool-val">true</span>;
+
+                <span class="comment">// A genuine player Ended event is stronger completion evidence than seek distance.
+                // Seeking alone still does not accumulate watched time. If the user seeks into the
+                // credits and the player actually reaches Ended, establish watched state before the
+                // normal unload/resume cleanup runs.
+                </span><span class="kw">let </span>completion_effects = <span class="kw">if </span>mark_ended_item_as_watched::&lt;E&gt;(
+                    <span class="kw-2">&amp;mut </span><span class="self">self</span>.library_item,
+                    <span class="kw-2">&amp;</span><span class="self">self</span>.selected,
+                    <span class="kw-2">&amp;mut </span><span class="self">self</span>.watched,
+                ) {
+                    <span class="self">self</span>.marked_video_as_watched = <span class="bool-val">true</span>;
+                    <span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.library_item {
+                        <span class="prelude-val">Some</span>(library_item) =&gt; Effects::msg(Msg::Internal(
+                            Internal::UpdateLibraryItem(library_item.to_owned()),
+                        ))
+                        .unchanged(),
+                        <span class="prelude-val">None </span>=&gt; Effects::none().unchanged(),
+                    }
+                } <span class="kw">else </span>{
+                    Effects::none().unchanged()
+                };
+
                 Effects::msg(Msg::Event(Event::PlayerEnded {
                     context: <span class="self">self</span>.analytics_context.as_ref().cloned().unwrap_or_default(),
                     is_binge_enabled: ctx.profile.settings.binge_watching,
                     is_playing_next_video: <span class="self">self</span>.next_video.is_some(),
                 }))
+                .join(completion_effects)
                 .unchanged()
             }
             Msg::Action(Action::Player(ActionPlayer::MarkVideoAsWatched(video, is_watched))) =&gt; {
@@ -4792,6 +4878,46 @@
         Effects::none().unchanged()
     }
 }
+
+<span class="kw">fn </span>mark_ended_item_as_watched&lt;E: Env&gt;(
+    library_item: <span class="kw-2">&amp;mut </span><span class="prelude-ty">Option</span>&lt;LibraryItem&gt;,
+    selected: <span class="kw-2">&amp;</span><span class="prelude-ty">Option</span>&lt;Selected&gt;,
+    watched: <span class="kw-2">&amp;mut </span><span class="prelude-ty">Option</span>&lt;WatchedBitField&gt;,
+) -&gt; bool {
+    <span class="kw">let </span><span class="prelude-val">Some</span>(library_item) = library_item.as_mut() <span class="kw">else </span>{
+        <span class="kw">return </span><span class="bool-val">false</span>;
+    };
+
+    <span class="kw">if </span>library_item.is_live()
+        || !<span class="macro">matches!</span>(library_item.r#type.as_str(), <span class="string">"movie" </span>| <span class="string">"series"</span>)
+        || library_item.state.duration == <span class="number">0
+        </span>|| library_item.state.flagged_watched != <span class="number">0
+        </span>|| library_item.state.time_offset <span class="kw">as </span>f64
+            &lt;= library_item.state.duration <span class="kw">as </span>f64 * CREDITS_THRESHOLD_COEF
+    {
+        <span class="kw">return </span><span class="bool-val">false</span>;
+    }
+
+    <span class="kw">if </span>library_item.r#type == <span class="string">"series" </span>{
+        <span class="kw">let </span><span class="prelude-val">Some</span>(video_id) = selected
+            .as_ref()
+            .and_then(|selected| selected.stream_request.as_ref())
+            .map(|stream_request| stream_request.path.id.as_str())
+        <span class="kw">else </span>{
+            <span class="kw">return </span><span class="bool-val">false</span>;
+        };
+        <span class="kw">let </span><span class="prelude-val">Some</span>(watched) = watched.as_mut() <span class="kw">else </span>{
+            <span class="kw">return </span><span class="bool-val">false</span>;
+        };
+        watched.set_video(video_id, <span class="bool-val">true</span>);
+        library_item.state.watched = <span class="prelude-val">Some</span>(watched.to_owned().into());
+    }
+
+    library_item.state.flagged_watched = <span class="number">1</span>;
+    library_item.state.times_watched = library_item.state.times_watched.saturating_add(<span class="number">1</span>);
+    library_item.state.last_watched = <span class="prelude-val">Some</span>(E::now());
+    <span class="bool-val">true
+</span>}
 
 <span class="kw">fn </span>item_state_update&lt;E: Env&gt;(
     library_item: <span class="kw-2">&amp;mut </span><span class="prelude-ty">Option</span>&lt;LibraryItem&gt;,
