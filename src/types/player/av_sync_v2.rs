@@ -227,12 +227,15 @@ impl Controller {
             return;
         }
         if sample.epoch != self.epoch {
-            self.pending = None;
+            // Recovery itself may advance the native epoch before its receipt arrives.
+            // Keep the original request until receipt, expiry or an explicit user interruption.
             self.bad_since = None;
             self.stable_since = None;
             self.last_capture = None;
             self.epoch = sample.epoch;
-            self.status = Status::Unknown;
+            if self.pending.is_none() {
+                self.status = Status::Unknown;
+            }
         }
         if self
             .interrupted_at_sample
@@ -255,14 +258,19 @@ impl Controller {
         }
         self.last_capture = Some(sample.captured_at_ms);
         self.sample_id = sample.sample_id;
+        if self.pending.is_some() {
+            self.offset_ms = if player_active && sample.active && sample.video_stable {
+                Some(sample.offset_ms)
+            } else {
+                None
+            };
+            return;
+        }
         if !player_active || !sample.active || !sample.video_stable {
             self.interrupt();
             return;
         }
         self.offset_ms = Some(sample.offset_ms);
-        if self.pending.is_some() {
-            return;
-        }
         if sample.offset_ms.abs() <= 60 {
             self.bad_since = None;
             let since = *self.stable_since.get_or_insert(sample.captured_at_ms);
@@ -559,5 +567,86 @@ mod tests {
         assert!(
             serde_json::from_value::<Observation>(serde_json::json!({"offsetMs": 400})).is_err()
         );
+    }
+}
+
+#[cfg(test)]
+mod acknowledgement_epoch_regressions {
+    use super::*;
+    fn pending() -> Controller {
+        let mut c = Controller::default();
+        c.begin();
+        for i in 1..=7 {
+            c.observe(
+                &Observation {
+                    session_id: c.session_id,
+                    epoch: 1,
+                    sample_id: i,
+                    captured_at_ms: i * 500,
+                    offset_ms: 400,
+                    active: true,
+                    video_stable: true,
+                    can_soft_correct: true,
+                    can_hard_correct: true,
+                },
+                i * 500,
+                true,
+            );
+        }
+        assert!(c.pending.is_some());
+        c
+    }
+    fn native_transition(c: &mut Controller) {
+        c.observe(
+            &Observation {
+                session_id: c.session_id,
+                epoch: 2,
+                sample_id: 8,
+                captured_at_ms: 4000,
+                offset_ms: 0,
+                active: true,
+                video_stable: false,
+                can_soft_correct: false,
+                can_hard_correct: false,
+            },
+            4000,
+            true,
+        );
+    }
+    #[test]
+    fn native_epoch_cannot_erase_missing_acknowledgement() {
+        let mut c = pending();
+        let request = c.pending.clone();
+        native_transition(&mut c);
+        assert_eq!(c.pending, request);
+        assert_eq!(c.status, Status::AwaitingAck);
+        c.tick(c.session_id, 5001);
+        assert_eq!(c.status, Status::Exhausted);
+    }
+    #[test]
+    fn delayed_receipt_matches_original_request_after_native_epoch_changes() {
+        let mut c = pending();
+        let request = c.pending.clone().unwrap();
+        native_transition(&mut c);
+        c.acknowledge(
+            &Acknowledgement {
+                session_id: request.session_id,
+                epoch: request.epoch,
+                generation: request.generation,
+                accepted: true,
+            },
+            4100,
+        );
+        assert!(c.pending.is_none());
+        assert_eq!(c.status, Status::Recovering);
+        assert_eq!(c.offset_ms, None);
+    }
+    #[test]
+    fn explicit_user_interruption_still_revokes_recovery_immediately() {
+        let mut c = pending();
+        native_transition(&mut c);
+        c.interrupt();
+        assert!(c.pending.is_none());
+        assert_eq!(c.status, Status::Unknown);
     }
 }
