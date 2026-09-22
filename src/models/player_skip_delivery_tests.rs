@@ -302,7 +302,10 @@ fn model_dismissal_is_generation_bound_and_preference_updates_shared_target() {
     };
     let mut ctx = Ctx::default();
     update(&mut player, Msg::Internal(Internal::ProfileChanged), &ctx);
-    assert_eq!(player.skip_segment.as_ref().unwrap().kind, SkipSegmentKind::Intro);
+    assert_eq!(
+        player.skip_segment.as_ref().unwrap().kind,
+        SkipSegmentKind::Intro
+    );
     assert_eq!(player.skip_segment.as_ref().unwrap().seek_to, Some(20_000));
     assert_eq!(player.skip_intro.as_ref().unwrap().seek_to, Some(20_000));
     update(
