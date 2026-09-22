@@ -409,7 +409,11 @@
 <a href="#408" id="408">408</a>
 <a href="#409" id="409">409</a>
 <a href="#410" id="410">410</a>
-<a href="#411" id="411">411</a></pre></div><pre class="rust"><code><span class="kw">use </span>semver::Version;
+<a href="#411" id="411">411</a>
+<a href="#412" id="412">412</a>
+<a href="#413" id="413">413</a>
+<a href="#414" id="414">414</a>
+<a href="#415" id="415">415</a></pre></div><pre class="rust"><code><span class="kw">use </span>semver::Version;
 <span class="kw">use </span>serde::Serialize;
 <span class="kw">use </span>url::Url;
 <span class="attr">#[cfg(feature = <span class="string">"wasm"</span>)]
@@ -531,6 +535,8 @@
         <span class="kw">pub </span>video_scale: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>VideoScale&gt;,
         <span class="attr">#[serde(skip_serializing_if = <span class="string">"Option::is_none"</span>)]
         </span><span class="kw">pub </span>intro_outro: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>stremio_core::types::player::IntroOutro&gt;,
+        <span class="kw">pub </span>skip_segment: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>stremio_core::types::player::SkipSegmentState&gt;,
+        <span class="kw">pub </span>skip_intro: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>stremio_core::types::player::SkipIntroState&gt;,
         <span class="kw">pub </span>title: <span class="prelude-ty">Option</span>&lt;String&gt;,
         <span class="kw">pub </span>addon: <span class="prelude-ty">Option</span>&lt;model::DescriptorPreview&lt;<span class="lifetime">'a</span>&gt;&gt;,
     }
@@ -749,6 +755,8 @@
         subtitle_preference: player.subtitle_preference.as_ref(),
         video_scale: player.video_scale.as_ref(),
         intro_outro: player.intro_outro.as_ref(),
+        skip_segment: player.skip_segment.as_ref(),
+        skip_intro: player.skip_intro.as_ref(),
         title: player.selected.as_ref().and_then(|selected| {
             player
                 .meta_item

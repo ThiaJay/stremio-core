@@ -177,7 +177,22 @@
 <a href="#176" id="176">176</a>
 <a href="#177" id="177">177</a>
 <a href="#178" id="178">178</a>
-<a href="#179" id="179">179</a></pre></div><pre class="rust"><code><span class="kw">use </span>url::Url;
+<a href="#179" id="179">179</a>
+<a href="#180" id="180">180</a>
+<a href="#181" id="181">181</a>
+<a href="#182" id="182">182</a>
+<a href="#183" id="183">183</a>
+<a href="#184" id="184">184</a>
+<a href="#185" id="185">185</a>
+<a href="#186" id="186">186</a>
+<a href="#187" id="187">187</a>
+<a href="#188" id="188">188</a>
+<a href="#189" id="189">189</a>
+<a href="#190" id="190">190</a>
+<a href="#191" id="191">191</a>
+<a href="#192" id="192">192</a>
+<a href="#193" id="193">193</a>
+<a href="#194" id="194">194</a></pre></div><pre class="rust"><code><span class="kw">use </span>url::Url;
 
 <span class="kw">use </span><span class="kw">crate</span>::models::common::ResourceLoadable;
 <span class="kw">use </span><span class="kw">crate</span>::models::ctx::CtxError;
@@ -195,6 +210,9 @@
 <span class="kw">use </span><span class="kw">crate</span>::types::profile::{Auth, AuthKey, Profile, User};
 <span class="kw">use </span><span class="kw">crate</span>::types::rating::{RatingGetStatusResponse, RatingSendResponse};
 <span class="kw">use </span><span class="kw">crate</span>::types::resource::MetaItemId;
+<span class="kw">use </span><span class="kw">crate</span>::types::skip_segments::{
+    SkipSegmentCacheEntry, SkipSegmentCandidate, SkipSegmentContext, SkipSegmentSource,
+};
 <span class="kw">use </span><span class="kw">crate</span>::types::streaming_server::{
     DeviceInfo, GetHTTPSResponse, NetworkInfo, SettingsResponse, Statistics, StatisticsRequest,
 };
@@ -337,6 +355,18 @@
     </span>SeekLogsResult(SeekLogRequest, <span class="prelude-ty">Result</span>&lt;SuccessResponse, CtxError&gt;),
     <span class="doccomment">/// Retrieve the skip gaps for skipping intro and outro.
     </span>SkipGapsResult(SkipGapsRequest, <span class="prelude-ty">Result</span>&lt;SkipGapsResponse, CtxError&gt;),
+    <span class="doccomment">/// Result from an independent skip-segment provider.
+    </span>SkipSegmentsResult(
+        SkipSegmentSource,
+        SkipSegmentContext,
+        <span class="prelude-ty">Result</span>&lt;Vec&lt;SkipSegmentCandidate&gt;, EnvError&gt;,
+    ),
+    SkipSegmentsCacheResult(
+        SkipSegmentSource,
+        SkipSegmentContext,
+        <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;SkipSegmentCacheEntry&gt;, EnvError&gt;,
+    ),
+    SkipSegmentsCacheWriteResult(<span class="prelude-ty">Result</span>&lt;(), EnvError&gt;),
     <span class="doccomment">/// The result of querying the data for LocalSearch
     </span>LoadLocalSearchResult(Url, <span class="prelude-ty">Result</span>&lt;Vec&lt;Searchable&gt;, EnvError&gt;),
     <span class="doccomment">/// Result for getModal request

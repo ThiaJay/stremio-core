@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["SkipSegmentKind","SkipSegmentMatch","SkipSegmentSource","SkipSegmentStreamSpecificity"],"struct":["ResolvedSkipSegment","SkipSegmentCacheEntry","SkipSegmentCandidate","SkipSegmentContext"]};

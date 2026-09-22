@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["SubtitleSource","VideoScale"],"struct":["AudioPreference","IntroData","IntroOutro","SubtitlePreference"]};
+window.SIDEBAR_ITEMS = {"enum":["SubtitleSource","VideoScale"],"struct":["AudioPreference","IntroData","IntroOutro","SkipSegmentState","SubtitlePreference"],"type":["SkipIntroState"]};
