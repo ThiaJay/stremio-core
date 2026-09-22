@@ -26,7 +26,7 @@ use crate::types::api::{
 };
 use crate::types::library::{LibraryBucket, LibraryItem};
 use crate::types::player::{
-    AvSyncCorrection, AvSyncObservation, AvSyncState, AvSyncStatus, AudioPreference, IntroData,
+    AudioPreference, AvSyncCorrection, AvSyncObservation, AvSyncState, AvSyncStatus, IntroData,
     IntroOutro, SubtitlePreference, VideoScale,
 };
 use crate::types::profile::{AuthKey, Profile};
@@ -52,7 +52,6 @@ const AV_SYNC_STABLE_THRESHOLD_MS: u64 = 60;
 const AV_SYNC_HARD_THRESHOLD_MS: u64 = 250;
 const AV_SYNC_PERSISTENT_SAMPLES: u8 = 3;
 const AV_SYNC_COOLDOWN_SAMPLES: u8 = 5;
-
 
 #[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -180,9 +179,8 @@ fn av_sync_update(
         return eq_update(state, AvSyncState::default());
     }
 
-    let transient = observation.buffering
-        || observation.seeking
-        || observation.refresh_rate_switching;
+    let transient =
+        observation.buffering || observation.seeking || observation.refresh_rate_switching;
     let absolute_offset = observation.offset_ms.checked_abs().unwrap_or(i64::MAX) as u64;
 
     if transient {
@@ -242,8 +240,7 @@ fn av_sync_update(
         );
     }
 
-    let correction = if absolute_offset >= AV_SYNC_HARD_THRESHOLD_MS
-        && observation.can_hard_correct
+    let correction = if absolute_offset >= AV_SYNC_HARD_THRESHOLD_MS && observation.can_hard_correct
     {
         Some(AvSyncCorrection::Hard)
     } else if observation.can_soft_correct {
