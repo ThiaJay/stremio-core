@@ -915,8 +915,7 @@ fn mark_ended_item_as_watched<E: Env>(
         return false;
     };
 
-    if library_item.is_live()
-        || !matches!(library_item.r#type.as_str(), "movie" | "series")
+    if !matches!(library_item.r#type.as_str(), "movie" | "series")
         || library_item.state.duration == 0
         || library_item.state.flagged_watched != 0
         || library_item.state.time_offset as f64
