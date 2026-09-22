@@ -1,0 +1,42 @@
+name: Retire recorded fork branches
+
+on:
+  push:
+    branches: [development]
+
+permissions:
+  contents: write
+
+jobs:
+  retire:
+    if: github.event.head_commit.message == 'Retire recorded fork branches'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Delete recorded branches
+        shell: bash
+        run: |
+          set -euo pipefail
+          branches=(
+            "automation/skip-intro-delivery-20260921"
+            "feat/skip-intro-provider-neutral-final"
+            "fix/mark-season-clears-stale-resume"
+            "fix/next-episode-unambiguous-fallback"
+            "manual-watched-trakt-intent"
+            "mark-watched-clears-resume"
+            "validate/skip-intro-popup-final"
+            "validation/next-episode-fallback-20260921"
+            "validation/skip-intro-hardened-20260921"
+          )
+          for branch in "${branches[@]}"; do
+            if git ls-remote --exit-code --heads origin "refs/heads/$branch" >/dev/null 2>&1; then
+              git push origin --delete "$branch"
+            fi
+            if git ls-remote --exit-code --heads origin "refs/heads/$branch" >/dev/null 2>&1; then
+              echo "::error::Branch still exists after deletion: $branch"
+              exit 1
+            fi
+          done
