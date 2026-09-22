@@ -1,7 +1,5 @@
 use crate::types::{
-    player::SkipSegmentState,
-    profile::SkipIntroMode,
-    skip_segments::SkipSegmentKind,
+    player::SkipSegmentState, profile::SkipIntroMode, skip_segments::SkipSegmentKind,
 };
 
 /// Shared half-open segment window and seek destination for every client.
