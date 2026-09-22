@@ -81,6 +81,8 @@ External evidence only changes the segment kinds it actually supplies. Existing 
 
 For credits/outro, Core must retain enough information to distinguish "skip the remaining credits" from "play next episode". Client presentation and next-video priority must never turn an outro timing error into an unintended episode change.
 
+A resolved skip segment always means a seek within the currently selected media. It must never be translated into the NextVideo action merely because the segment kind is Outro or because its end equals the media duration. If seeking to the resolved end naturally causes normal end-of-media handling, the existing next-video pipeline may then run independently. This separation prevents Skip Credits from bypassing stream continuity checks or opening episode selection as a side effect of skip logic.
+
 ## Cache and freshness
 
 Successful cache-eligible external candidates are cached locally per provider using media identity and exact duration. IntroDB and TheIntroDB therefore retain independent outage fallbacks.
