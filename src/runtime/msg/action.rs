@@ -20,7 +20,10 @@ use crate::{
         addon::Descriptor,
         api::AuthRequest,
         library::LibraryItemId,
-        player::{AudioPreference, AvSyncObservation, SubtitlePreference, VideoScale},
+        player::{
+            AudioPreference, AvSyncObservation, PlaybackHealthObservation, SubtitlePreference,
+            VideoScale,
+        },
         profile::{AuthKey, Password, Settings as ProfileSettings},
         rating::Rating,
         resource::{MetaItemId, MetaItemPreview, Video},
@@ -248,6 +251,14 @@ pub enum ActionPlayer {
     /// report synthetic samples.
     AvSyncObserved {
         observation: AvSyncObservation,
+    },
+    /// Reports independent audio and video health from the active backend.
+    ///
+    /// This is intentionally separate from A/V clock drift. A player switch is
+    /// not considered successful merely because audio starts if video becomes
+    /// unstable as a result.
+    PlaybackHealthObserved {
+        observation: PlaybackHealthObservation,
     },
     /// Updates the audio preference for the current Player session.
     AudioPreferenceChanged {
