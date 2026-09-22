@@ -37,8 +37,8 @@ use crate::types::resource::{
     MetaItem, SeriesInfo, Stream, StreamSource, StreamUrls, Subtitles, Video,
 };
 use crate::types::skip_segments::{
-    SkipSegmentCacheEntry, SkipSegmentCandidate, SkipSegmentContext, SkipSegmentKind,
-    SkipSegmentSource,
+    ResolvedSkipSegment, SkipSegmentCacheEntry, SkipSegmentCandidate, SkipSegmentContext,
+    SkipSegmentKind, SkipSegmentSource,
 };
 use crate::types::streams::{
     ConvertedStreamSource, StreamItemState, StreamsBucket, StreamsItemKey,
@@ -131,13 +131,15 @@ pub struct Player {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub intro_outro: Option<IntroOutro>,
     /// Provider neutral descriptor and deterministic seek target for all clients.
+    pub skip_segment: Option<crate::types::player::SkipSegmentState>,
+    /// Temporary compatibility mirror for intro-only clients.
     pub skip_intro: Option<crate::types::player::SkipIntroState>,
     #[serde(skip_serializing)]
     pub playback_generation: u64,
     #[serde(skip_serializing)]
     pub skip_intro_playback: Option<(u64, u64)>,
     #[serde(skip_serializing)]
-    pub skip_intro_dismissal: Option<(u64, u64, u64)>,
+    pub skip_segment_dismissal: Option<(u64, SkipSegmentKind, u64, u64)>,
     #[serde(skip_serializing)]
     pub watched: Option<WatchedBitField>,
     #[serde(skip_serializing)]
@@ -182,7 +184,7 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
             Msg::Action(Action::Load(ActionLoad::Player(_))) | Msg::Action(Action::Unload) => {
                 self.playback_generation = self.playback_generation.saturating_add(1);
                 self.skip_intro_playback = None;
-                self.skip_intro_dismissal = None;
+                self.skip_segment_dismissal = None;
             }
             Msg::Action(Action::Player(
                 ActionPlayer::Seek { time, duration, .. }
@@ -1263,15 +1265,35 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                 )
             }
             Msg::Internal(Internal::SkipSegmentsCacheWriteResult(_)) => Effects::none().unchanged(),
+            Msg::Action(Action::Player(ActionPlayer::DismissSkipSegment {
+                generation,
+                kind,
+                from,
+                to,
+            })) => {
+                if self.skip_segment.as_ref().is_some_and(|state| {
+                    state.generation == *generation
+                        && state.kind == *kind
+                        && state.from == *from
+                        && state.to == *to
+                }) {
+                    self.skip_segment_dismissal = Some((*generation, *kind, *from, *to));
+                }
+                Effects::none().unchanged()
+            }
             Msg::Action(Action::Player(ActionPlayer::DismissSkipIntro {
                 generation,
                 from,
                 to,
             })) => {
-                if self.skip_intro.as_ref().is_some_and(|state| {
-                    state.generation == *generation && state.from == *from && state.to == *to
+                if self.skip_segment.as_ref().is_some_and(|state| {
+                    state.kind == SkipSegmentKind::Intro
+                        && state.generation == *generation
+                        && state.from == *from
+                        && state.to == *to
                 }) {
-                    self.skip_intro_dismissal = Some((*generation, *from, *to));
+                    self.skip_segment_dismissal =
+                        Some((*generation, SkipSegmentKind::Intro, *from, *to));
                 }
                 Effects::none().unchanged()
             }
@@ -1296,7 +1318,7 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
         } else {
             effects
         };
-        let skip_intro = self
+        let skip_segment = self
             .selected
             .as_ref()
             .filter(|_| self.live.is_none() && !self.ended)
@@ -1307,17 +1329,34 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                     return None;
                 }
                 let (time, duration) = self.skip_intro_playback?;
-                crate::models::skip_intro::state(
-                    self.intro_outro.as_ref().and_then(|v| v.intro.as_ref()),
-                    &request.path.id,
-                    self.playback_generation,
-                    time,
-                    duration,
-                    &ctx.profile.settings.skip_intro_mode,
-                    self.skip_intro_dismissal,
+                resolved_presentation_segments(
+                    &self.skip_gaps,
+                    Some(item),
+                    &self.skip_segment_candidates,
                 )
+                .into_iter()
+                .find(|segment| time >= segment.from_ms && time < segment.to_ms)
+                .and_then(|segment| {
+                    crate::models::skip_intro::state(
+                        segment.kind,
+                        segment.from_ms,
+                        segment.to_ms,
+                        &request.path.id,
+                        self.playback_generation,
+                        time,
+                        duration,
+                        &ctx.profile.settings.skip_intro_mode,
+                        self.skip_segment_dismissal,
+                    )
+                })
             });
-        effects.join(eq_update(&mut self.skip_intro, skip_intro))
+        let skip_intro = skip_segment
+            .as_ref()
+            .filter(|state| state.kind == SkipSegmentKind::Intro)
+            .cloned();
+        effects
+            .join(eq_update(&mut self.skip_segment, skip_segment))
+            .join(eq_update(&mut self.skip_intro, skip_intro))
     }
 }
 
@@ -2067,6 +2106,33 @@ fn external_skip_segments_update<E: Env + 'static>(
         }
         None => Effects::none(),
     }
+}
+
+fn resolved_presentation_segments(
+    skip_gaps: &Option<(SkipGapsRequest, Loadable<SkipGapsResponse, CtxError>)>,
+    library_item: Option<&LibraryItem>,
+    external_candidates: &[SkipSegmentCandidate],
+) -> Vec<ResolvedSkipSegment> {
+    let Some(library_item) = library_item.filter(|item| item.state.duration > 0) else {
+        return Vec::new();
+    };
+
+    let mut candidates = external_candidates.to_vec();
+    if let Some((_, Loadable::Ready(response))) = skip_gaps {
+        candidates.extend(stremio_native_candidates(
+            response,
+            library_item.state.duration,
+        ));
+    }
+
+    [
+        SkipSegmentKind::Recap,
+        SkipSegmentKind::Intro,
+        SkipSegmentKind::Outro,
+    ]
+    .into_iter()
+    .filter_map(|kind| resolve_skip_segment(kind, &candidates))
+    .collect()
 }
 
 fn apply_resolved_skip_segments(
