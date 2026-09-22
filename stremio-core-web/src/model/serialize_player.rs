@@ -11,7 +11,7 @@ use stremio_core::models::player::Player;
 use stremio_core::models::streaming_server::StreamingServer;
 use stremio_core::types::{
     addon::{ResourcePath, ResourceRequest},
-    player::{AvSyncState, AudioPreference, SubtitlePreference, VideoScale},
+    player::{AudioPreference, AvSyncState, SubtitlePreference, VideoScale},
     streams::StreamItemState,
 };
 
