@@ -1027,4 +1027,74 @@ mod tests {
 
         assert!(resolve_skip_segment(SkipSegmentKind::Intro, &candidates).is_none());
     }
+
+    #[test]
+    fn resolver_is_provider_neutral_when_evidence_quality_is_equal() {
+        let mut first = candidate(
+            SkipSegmentSource::IntroDb,
+            60_000,
+            90_000,
+            8,
+            SkipSegmentStreamSpecificity::Episode,
+            false,
+        );
+        first.source_confidence = Some(0.9);
+        let mut second = first.clone();
+        second.source = SkipSegmentSource::TheIntroDb;
+
+        let a = resolve_skip_segment(SkipSegmentKind::Intro, &[first.clone(), second.clone()])
+            .expect("equal trusted providers should resolve");
+        let b = resolve_skip_segment(SkipSegmentKind::Intro, &[second, first])
+            .expect("source ordering must not change resolution");
+
+        assert_eq!((a.from_ms, a.to_ms), (b.from_ms, b.to_ms));
+        assert_eq!(a.confidence, b.confidence);
+        assert_eq!(a.provenance.len(), 2);
+        assert_eq!(b.provenance.len(), 2);
+    }
+
+    #[test]
+    fn strong_community_evidence_can_establish_a_segment_without_native_skip_gaps() {
+        let candidate = SkipSegmentCandidate {
+            kind: SkipSegmentKind::Recap,
+            start_ms: 5_000,
+            end_ms: 45_000,
+            source: SkipSegmentSource::IntroDb,
+            source_match: SkipSegmentMatch::ExactEpisode,
+            source_confidence: None,
+            adjusted: false,
+            evidence_count: 12,
+            stream_specificity: SkipSegmentStreamSpecificity::Episode,
+        };
+
+        let resolved = resolve_skip_segment(SkipSegmentKind::Recap, &[candidate])
+            .expect("strong community evidence should stand on its own");
+
+        assert_eq!(resolved.from_ms, 5_000);
+        assert_eq!(resolved.to_ms, 45_000);
+        assert_eq!(resolved.provenance, vec![SkipSegmentSource::IntroDb]);
+    }
+
+    #[test]
+    fn credits_are_resolved_as_a_first_class_segment_without_stream_rewriting() {
+        let candidate = SkipSegmentCandidate {
+            kind: SkipSegmentKind::Outro,
+            start_ms: 1_800_000,
+            end_ms: 1_900_000,
+            source: SkipSegmentSource::TheIntroDb,
+            source_match: SkipSegmentMatch::ExactEpisode,
+            source_confidence: Some(0.92),
+            adjusted: false,
+            evidence_count: 10,
+            stream_specificity: SkipSegmentStreamSpecificity::Episode,
+        };
+
+        let resolved = resolve_skip_segment(SkipSegmentKind::Outro, &[candidate])
+            .expect("trusted credits evidence should resolve");
+
+        assert_eq!(resolved.kind, SkipSegmentKind::Outro);
+        assert_eq!(resolved.from_ms, 1_800_000);
+        assert_eq!(resolved.to_ms, 1_900_000);
+    }
+
 }
