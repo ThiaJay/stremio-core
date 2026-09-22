@@ -345,6 +345,36 @@ fn model_dismissal_is_generation_bound_and_preference_updates_shared_target() {
     assert!(player.skip_segment_dismissal.is_none());
 }
 
+
+#[test]
+fn outro_at_media_end_remains_a_seek_segment_not_next_video_state() {
+    let _guard = TestEnv::reset().unwrap();
+    let mut outro = candidate(SkipSegmentSource::IntroDb, 90_000);
+    outro.kind = SkipSegmentKind::Outro;
+    outro.end_ms = 100_000;
+
+    let mut player = Player {
+        selected: Some(selected()),
+        library_item: Some(item()),
+        playback_generation: 7,
+        skip_intro_playback: Some((95_000, 100_000)),
+        skip_segment_candidates: vec![outro],
+        ..Default::default()
+    };
+
+    update(
+        &mut player,
+        Msg::Internal(Internal::ProfileChanged),
+        &Ctx::default(),
+    );
+
+    let state = player.skip_segment.as_ref().expect("outro should be exposed");
+    assert_eq!(state.kind, SkipSegmentKind::Outro);
+    assert_eq!(state.seek_to, Some(100_000));
+    assert_eq!(state.video_id, "tt0903747:1:5");
+    assert!(!player.ended);
+}
+
 #[test]
 fn new_load_resets_descriptor_even_for_identical_source() {
     let _guard = TestEnv::reset().unwrap();
