@@ -152,6 +152,9 @@ pub struct Player {
     pub skip_intro_playback: Option<(u64, u64)>,
     #[serde(skip_serializing)]
     pub skip_segment_dismissal: Option<(u64, SkipSegmentKind, u64, u64)>,
+    /// Consumed segments for this playback lifecycle only, bounded to 64 entries.
+    #[serde(skip_serializing)]
+    pub skip_segment_dismissals: Vec<(u64, SkipSegmentKind, u64, u64)>,
     #[serde(skip_serializing)]
     pub watched: Option<WatchedBitField>,
     #[serde(skip_serializing)]
@@ -420,6 +423,7 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                 self.playback_generation = self.playback_generation.saturating_add(1);
                 self.skip_intro_playback = None;
                 self.skip_segment_dismissal = None;
+                self.skip_segment_dismissals.clear();
             }
             Msg::Action(Action::Player(
                 ActionPlayer::Seek { time, duration, .. }
@@ -1618,6 +1622,22 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
         } else {
             effects
         };
+        // Preserve earlier consumed segments when a later segment is dismissed.
+        // Invalid dismissal messages cannot insert a new identity.
+        if matches!(
+            msg,
+            Msg::Action(Action::Player(
+                ActionPlayer::DismissSkipSegment { .. } | ActionPlayer::DismissSkipIntro { .. }
+            ))
+        ) {
+            if let Some(identity) = self.skip_segment_dismissal {
+                if self.skip_segment_dismissals.len() < 64
+                    && !self.skip_segment_dismissals.contains(&identity)
+                {
+                    self.skip_segment_dismissals.push(identity);
+                }
+            }
+        }
         let skip_segment = self
             .selected
             .as_ref()
@@ -1637,6 +1657,19 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                 .into_iter()
                 .find(|segment| time >= segment.from_ms && time < segment.to_ms)
                 .and_then(|segment| {
+                    let identity = (
+                        self.playback_generation,
+                        segment.kind,
+                        segment.from_ms,
+                        segment.to_ms,
+                    );
+                    let dismissal = if self.skip_segment_dismissals.contains(&identity)
+                        || self.skip_segment_dismissals.len() >= 64
+                    {
+                        Some(identity)
+                    } else {
+                        self.skip_segment_dismissal
+                    };
                     crate::models::skip_intro::state(
                         segment.kind,
                         segment.from_ms,
@@ -1646,7 +1679,7 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                         time,
                         duration,
                         &ctx.profile.settings.skip_intro_mode,
-                        self.skip_segment_dismissal,
+                        dismissal,
                     )
                 })
             });
