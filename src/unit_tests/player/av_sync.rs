@@ -132,6 +132,33 @@ fn unavailable_correction_is_reported_without_guessing() {
 }
 
 #[test]
+fn cooldown_prevents_immediate_correction_loop() {
+    let _env_mutex = TestEnv::reset().expect("Should have exclusive lock to TestEnv");
+    let ctx = Ctx::default();
+    let mut player = Player {
+        selected: Some(selected()),
+        ..Default::default()
+    };
+
+    for _ in 0..3 {
+        report(&mut player, &ctx, observation(120));
+    }
+    assert_eq!(player.av_sync.generation, 1);
+
+    for _ in 0..5 {
+        report(&mut player, &ctx, observation(120));
+        assert_eq!(player.av_sync.correction, None);
+        assert_eq!(player.av_sync.generation, 1);
+    }
+
+    for _ in 0..3 {
+        report(&mut player, &ctx, observation(120));
+    }
+    assert_eq!(player.av_sync.correction, Some(AvSyncCorrection::Soft));
+    assert_eq!(player.av_sync.generation, 2);
+}
+
+#[test]
 fn player_load_resets_previous_sync_state() {
     let _env_mutex = TestEnv::reset().expect("Should have exclusive lock to TestEnv");
     let ctx = Ctx::default();
