@@ -57,10 +57,11 @@ pub struct IntroData {
     pub duration: Option<u64>,
 }
 
-/// Portable presentation state. The client performs seek_to through its media actuator.
+/// Portable resolved skip state. Clients perform seek_to through the normal media actuator.
 #[derive(Clone, Serialize, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct SkipIntroState {
+pub struct SkipSegmentState {
+    pub kind: crate::types::skip_segments::SkipSegmentKind,
     pub generation: u64,
     pub video_id: String,
     pub from: u64,
@@ -71,3 +72,6 @@ pub struct SkipIntroState {
     pub dismissed: bool,
     pub seek_to: Option<u64>,
 }
+
+/// Transitional compatibility alias for clients that still consume the intro-only descriptor.
+pub type SkipIntroState = SkipSegmentState;
