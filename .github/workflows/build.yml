@@ -56,6 +56,9 @@ jobs:
 
   build-stremio-core-web:
     name: "stremio-core-web: test (wasm) and build"
+    concurrency:
+      group: stremio-core-gh-pages-write
+      cancel-in-progress: false
     permissions:
       contents: write
 
