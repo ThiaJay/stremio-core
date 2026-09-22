@@ -1,4 +1,5 @@
 mod audio_preference;
+mod av_sync;
 mod mark_video_as_watched;
 mod next_stream;
 mod subtitle_preference;
