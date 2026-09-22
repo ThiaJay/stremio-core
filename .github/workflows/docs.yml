@@ -14,6 +14,9 @@ concurrency:
 jobs:
   deploy-docs:
     name: Deploy docs on gh-pages
+    concurrency:
+      group: stremio-core-gh-pages-write
+      cancel-in-progress: false
     permissions:
       contents: write
     runs-on: ubuntu-latest

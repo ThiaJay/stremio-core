@@ -20,6 +20,8 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Reconcile current development player hardening
+        run: python3 scripts/integrate-current-development-player.py
       - name: Integrate exact candidate bindings
         run: python3 scripts/integrate-av-sync-v2.py
       - name: Format candidate files
