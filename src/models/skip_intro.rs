@@ -52,7 +52,7 @@ mod tests {
             SkipSegmentKind::Recap,
             SkipSegmentKind::Outro,
         ] {
-            let (from, to) = if kind == SkipSegmentKind::Outro {
+            let (from, to): (u64, u64) = if kind == SkipSegmentKind::Outro {
                 (80_000, 100_000)
             } else {
                 (10_000, 20_000)
