@@ -29,7 +29,9 @@ use crate::types::api::{
 };
 use crate::types::library::{LibraryBucket, LibraryItem};
 use crate::types::player::{
-    AudioPreference, IntroData, IntroOutro, SubtitlePreference, VideoScale,
+    AudioPreference, AvSyncCorrection, AvSyncObservation, AvSyncState, AvSyncStatus, IntroData,
+    IntroOutro, PlaybackHealthObservation, PlaybackHealthState, PlaybackHealthStatus,
+    PlaybackRecoveryAction, SubtitlePreference, VideoScale,
 };
 use crate::types::profile::{AuthKey, Profile};
 use crate::types::rating::{Rating, RatingSendRequest, RatingSendResponse};
@@ -54,6 +56,11 @@ use once_cell::sync::Lazy;
 
 /// The duration that must have passed in order for a library item to be updated.
 pub static PUSH_TO_LIBRARY_EVERY: Lazy<Duration> = Lazy::new(|| Duration::seconds(90));
+const AV_SYNC_STABLE_THRESHOLD_MS: u64 = 60;
+const AV_SYNC_HARD_THRESHOLD_MS: u64 = 250;
+const AV_SYNC_PERSISTENT_SAMPLES: u8 = 3;
+const AV_SYNC_COOLDOWN_SAMPLES: u8 = 5;
+const PLAYBACK_HEALTH_PERSISTENT_SAMPLES: u8 = 2;
 
 #[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -128,6 +135,11 @@ pub struct Player {
     pub audio_preference: Option<AudioPreference>,
     pub subtitle_preference: Option<SubtitlePreference>,
     pub video_scale: Option<VideoScale>,
+    /// Core-owned automatic audio/video synchronisation state.
+    pub av_sync: AvSyncState,
+    pub av_sync_v2: crate::types::player::av_sync_v2::Controller,
+    /// Core-owned playback health and recovery state.
+    pub playback_health: PlaybackHealthState,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub intro_outro: Option<IntroOutro>,
     /// Provider neutral descriptor and deterministic seek target for all clients.
@@ -167,6 +179,12 @@ pub struct Player {
     #[serde(skip_serializing)]
     pub seek_history: Vec<SeekLog>,
     #[serde(skip_serializing)]
+    pub av_sync_bad_samples: u8,
+    #[serde(skip_serializing)]
+    pub av_sync_cooldown_samples: u8,
+    #[serde(skip_serializing)]
+    pub playback_health_bad_samples: u8,
+    #[serde(skip_serializing)]
     pub skip_gaps: Option<(SkipGapsRequest, Loadable<SkipGapsResponse, CtxError>)>,
     #[serde(skip_serializing)]
     pub skip_segment_context: Option<SkipSegmentContext>,
@@ -179,6 +197,223 @@ pub struct Player {
     /// Default: `false` (Do not collect)
     #[serde(default, skip_serializing)]
     pub collect_seek_logs: bool,
+}
+
+fn av_sync_update(
+    state: &mut AvSyncState,
+    bad_samples: &mut u8,
+    cooldown_samples: &mut u8,
+    observation: &AvSyncObservation,
+    active: bool,
+) -> Effects {
+    if !active {
+        *bad_samples = 0;
+        *cooldown_samples = 0;
+        return eq_update(state, AvSyncState::default());
+    }
+
+    let transient =
+        observation.buffering || observation.seeking || observation.refresh_rate_switching;
+    let absolute_offset = observation.offset_ms.checked_abs().unwrap_or(i64::MAX) as u64;
+
+    if transient {
+        *bad_samples = 0;
+        return eq_update(
+            state,
+            AvSyncState {
+                offset_ms: observation.offset_ms,
+                status: AvSyncStatus::Monitoring,
+                correction: None,
+                generation: state.generation,
+            },
+        );
+    }
+
+    if *cooldown_samples > 0 {
+        *cooldown_samples -= 1;
+        *bad_samples = 0;
+        return eq_update(
+            state,
+            AvSyncState {
+                offset_ms: observation.offset_ms,
+                status: if absolute_offset <= AV_SYNC_STABLE_THRESHOLD_MS {
+                    AvSyncStatus::Stable
+                } else {
+                    AvSyncStatus::Monitoring
+                },
+                correction: None,
+                generation: state.generation,
+            },
+        );
+    }
+
+    if absolute_offset <= AV_SYNC_STABLE_THRESHOLD_MS {
+        *bad_samples = 0;
+        return eq_update(
+            state,
+            AvSyncState {
+                offset_ms: observation.offset_ms,
+                status: AvSyncStatus::Stable,
+                correction: None,
+                generation: state.generation,
+            },
+        );
+    }
+
+    *bad_samples = (*bad_samples).saturating_add(1);
+    if *bad_samples < AV_SYNC_PERSISTENT_SAMPLES {
+        return eq_update(
+            state,
+            AvSyncState {
+                offset_ms: observation.offset_ms,
+                status: AvSyncStatus::Monitoring,
+                correction: None,
+                generation: state.generation,
+            },
+        );
+    }
+
+    let correction = if absolute_offset >= AV_SYNC_HARD_THRESHOLD_MS && observation.can_hard_correct
+    {
+        Some(AvSyncCorrection::Hard)
+    } else if observation.can_soft_correct {
+        Some(AvSyncCorrection::Soft)
+    } else if observation.can_hard_correct {
+        Some(AvSyncCorrection::Hard)
+    } else {
+        None
+    };
+
+    if correction.is_some() {
+        *bad_samples = 0;
+        *cooldown_samples = AV_SYNC_COOLDOWN_SAMPLES;
+    } else {
+        *bad_samples = AV_SYNC_PERSISTENT_SAMPLES;
+    }
+
+    eq_update(
+        state,
+        AvSyncState {
+            offset_ms: observation.offset_ms,
+            status: if correction.is_some() {
+                AvSyncStatus::Correcting
+            } else {
+                AvSyncStatus::Uncorrectable
+            },
+            correction,
+            generation: if correction.is_some() {
+                state.generation.saturating_add(1)
+            } else {
+                state.generation
+            },
+        },
+    )
+}
+
+fn playback_health_update(
+    state: &mut PlaybackHealthState,
+    bad_samples: &mut u8,
+    observation: &PlaybackHealthObservation,
+    active: bool,
+) -> Effects {
+    if !active {
+        *bad_samples = 0;
+        return eq_update(state, PlaybackHealthState::default());
+    }
+
+    if observation.transient {
+        *bad_samples = 0;
+        return eq_update(
+            state,
+            PlaybackHealthState {
+                status: PlaybackHealthStatus::Monitoring,
+                recovery: None,
+                generation: state.generation,
+                engine: observation.engine.clone(),
+                audio_codec: observation.audio_codec.clone(),
+            },
+        );
+    }
+
+    let audio_healthy = !observation.audio_expected || observation.audio_present;
+    let healthy = audio_healthy && observation.video_stable;
+    if healthy {
+        *bad_samples = 0;
+        return eq_update(
+            state,
+            PlaybackHealthState {
+                status: PlaybackHealthStatus::Healthy,
+                recovery: None,
+                generation: state.generation,
+                engine: observation.engine.clone(),
+                audio_codec: observation.audio_codec.clone(),
+            },
+        );
+    }
+
+    *bad_samples = (*bad_samples).saturating_add(1);
+    if *bad_samples < PLAYBACK_HEALTH_PERSISTENT_SAMPLES {
+        return eq_update(
+            state,
+            PlaybackHealthState {
+                status: PlaybackHealthStatus::Monitoring,
+                recovery: None,
+                generation: state.generation,
+                engine: observation.engine.clone(),
+                audio_codec: observation.audio_codec.clone(),
+            },
+        );
+    }
+
+    let recovery = if !audio_healthy && observation.video_stable {
+        if observation.can_transcode_audio {
+            Some(PlaybackRecoveryAction::TranscodeAudio)
+        } else if observation.can_switch_engine {
+            Some(PlaybackRecoveryAction::SwitchPlaybackEngine)
+        } else if observation.can_switch_stream {
+            Some(PlaybackRecoveryAction::SwitchStream)
+        } else {
+            None
+        }
+    } else if audio_healthy && !observation.video_stable {
+        if observation.can_restore_stable_video && observation.can_transcode_audio {
+            Some(PlaybackRecoveryAction::RestoreStableVideoAndTranscodeAudio)
+        } else if observation.can_switch_stream {
+            Some(PlaybackRecoveryAction::SwitchStream)
+        } else if observation.can_switch_engine {
+            Some(PlaybackRecoveryAction::SwitchPlaybackEngine)
+        } else {
+            None
+        }
+    } else if observation.can_switch_engine {
+        Some(PlaybackRecoveryAction::SwitchPlaybackEngine)
+    } else if observation.can_switch_stream {
+        Some(PlaybackRecoveryAction::SwitchStream)
+    } else {
+        None
+    };
+
+    *bad_samples = 0;
+    let generation = if recovery.is_some() && recovery != state.recovery {
+        state.generation.saturating_add(1)
+    } else {
+        state.generation
+    };
+
+    eq_update(
+        state,
+        PlaybackHealthState {
+            status: if recovery.is_some() {
+                PlaybackHealthStatus::Recovering
+            } else {
+                PlaybackHealthStatus::Exhausted
+            },
+            recovery,
+            generation,
+            engine: observation.engine.clone(),
+            audio_codec: observation.audio_codec.clone(),
+        },
+    )
 }
 
 impl<E: Env + 'static> UpdateWithCtx<E> for Player {
@@ -198,6 +433,43 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
             }
             _ => {}
         }
+        let mut sync = self.av_sync_v2.clone();
+        match msg {
+            Msg::Action(Action::Load(ActionLoad::Player(_))) => sync.begin(),
+            Msg::Action(Action::Unload) => sync.close(),
+            Msg::Action(Action::Player(
+                ActionPlayer::Seek { .. }
+                | ActionPlayer::Ended
+                | ActionPlayer::PausedChanged { paused: true },
+            )) => sync.interrupt(),
+            Msg::Action(Action::Player(ActionPlayer::AvSyncV2Observed {
+                observation,
+                now_ms,
+            })) => {
+                sync.observe(
+                    observation,
+                    *now_ms,
+                    self.selected.is_some()
+                        && self.paused == Some(false)
+                        && !self.ended
+                        && self.playback_health.recovery.is_none(),
+                );
+                return eq_update(&mut self.av_sync_v2, sync);
+            }
+            Msg::Action(Action::Player(ActionPlayer::AvSyncV2Acknowledged {
+                acknowledgement,
+                now_ms,
+            })) => {
+                sync.acknowledge(acknowledgement, *now_ms);
+                return eq_update(&mut self.av_sync_v2, sync);
+            }
+            Msg::Action(Action::Player(ActionPlayer::AvSyncV2Tick { session_id, now_ms })) => {
+                sync.tick(*session_id, *now_ms);
+                return eq_update(&mut self.av_sync_v2, sync);
+            }
+            _ => {}
+        }
+        let sync_effects = eq_update(&mut self.av_sync_v2, sync);
         let effects = match msg {
             Msg::Action(Action::Load(ActionLoad::Player(selected))) => {
                 let same_video = self.selected.as_ref().is_some_and(|previous| {
@@ -407,6 +679,11 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                 self.loaded = false;
                 self.ended = false;
                 self.paused = None;
+                self.av_sync = AvSyncState::default();
+                self.av_sync_bad_samples = 0;
+                self.av_sync_cooldown_samples = 0;
+                self.playback_health = PlaybackHealthState::default();
+                self.playback_health_bad_samples = 0;
                 self.marked_video_as_watched = false;
                 if !same_video {
                     self.marked_season_as_watched = None;
@@ -502,6 +779,11 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                 self.loaded = false;
                 self.ended = false;
                 self.paused = None;
+                self.av_sync = AvSyncState::default();
+                self.av_sync_bad_samples = 0;
+                self.av_sync_cooldown_samples = 0;
+                self.playback_health = PlaybackHealthState::default();
+                self.playback_health_bad_samples = 0;
                 self.marked_video_as_watched = false;
                 self.marked_season_as_watched = None;
 
@@ -567,6 +849,23 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                         .and_then(|selected| selected.meta_request.to_owned()),
                 }))
                 .unchanged()
+            }
+            Msg::Action(Action::Player(ActionPlayer::AvSyncObserved { observation })) => {
+                av_sync_update(
+                    &mut self.av_sync,
+                    &mut self.av_sync_bad_samples,
+                    &mut self.av_sync_cooldown_samples,
+                    observation,
+                    self.selected.is_some() && self.paused != Some(true),
+                )
+            }
+            Msg::Action(Action::Player(ActionPlayer::PlaybackHealthObserved { observation })) => {
+                playback_health_update(
+                    &mut self.playback_health,
+                    &mut self.playback_health_bad_samples,
+                    observation,
+                    self.selected.is_some() && self.paused != Some(true),
+                )
             }
             Msg::Action(Action::Player(ActionPlayer::AudioPreferenceChanged { preference })) => {
                 if self.selected.is_some() {
@@ -1309,6 +1608,7 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
             }
             _ => Effects::none().unchanged(),
         };
+        let effects = effects.join(sync_effects);
         let effects = if matches!(
             msg,
             Msg::Action(Action::Load(ActionLoad::Player(_)))

@@ -1,0 +1,71 @@
+name: A V session safety
+on:
+  push:
+    branches: [feat/av-sync-session-safety]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: av-sync-session-safety-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.85
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Reconcile current development player hardening
+        run: python3 scripts/integrate-current-development-player.py
+      - name: Integrate exact candidate bindings
+        run: python3 scripts/integrate-av-sync-v2.py
+      - name: Format candidate files
+        run: cargo fmt --all
+      - name: Full Core tests and lint
+        run: |
+          cargo test --locked
+          cargo clippy --locked --all --no-deps -- -D warnings
+          cargo build --locked
+      - name: Retain validated sources
+        uses: actions/upload-artifact@v4
+        with:
+          name: av-sync-core-sources
+          retention-days: 7
+          path: |
+            src/models/player.rs
+            src/types/player.rs
+            src/types/player/av_sync_v2.rs
+            src/runtime/msg/action.rs
+            stremio-core-web/src/model/serialize_player.rs
+  persist:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: av-sync-core-sources
+      - name: Save validated bindings without overwriting concurrent work
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(gh api repos/ThiaJay/stremio-core/git/ref/heads/feat/av-sync-session-safety --jq .object.sha)" = "$EXPECTED_SHA"
+          git add -- src/models/player.rs src/types/player.rs src/types/player/av_sync_v2.rs src/runtime/msg/action.rs stremio-core-web/src/model/serialize_player.rs
+          if git diff --cached --quiet; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Integrate validated session bound A/V recovery'
+          git -c credential.helper='!gh auth git-credential' push origin HEAD:refs/heads/feat/av-sync-session-safety

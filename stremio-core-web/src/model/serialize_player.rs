@@ -11,7 +11,7 @@ use stremio_core::models::player::Player;
 use stremio_core::models::streaming_server::StreamingServer;
 use stremio_core::types::{
     addon::{ResourcePath, ResourceRequest},
-    player::{AudioPreference, SubtitlePreference, VideoScale},
+    player::{AudioPreference, AvSyncState, PlaybackHealthState, SubtitlePreference, VideoScale},
     streams::StreamItemState,
 };
 
@@ -118,6 +118,9 @@ mod model {
         pub audio_preference: Option<&'a AudioPreference>,
         pub subtitle_preference: Option<&'a SubtitlePreference>,
         pub video_scale: Option<&'a VideoScale>,
+        pub av_sync: &'a AvSyncState,
+        pub av_sync_v2: &'a stremio_core::types::player::av_sync_v2::Controller,
+        pub playback_health: &'a PlaybackHealthState,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub intro_outro: Option<&'a stremio_core::types::player::IntroOutro>,
         pub skip_segment: Option<&'a stremio_core::types::player::SkipSegmentState>,
@@ -339,6 +342,9 @@ pub fn serialize_player<E: stremio_core::runtime::Env + 'static>(
         audio_preference: player.audio_preference.as_ref(),
         subtitle_preference: player.subtitle_preference.as_ref(),
         video_scale: player.video_scale.as_ref(),
+        av_sync: &player.av_sync,
+        av_sync_v2: &player.av_sync_v2,
+        playback_health: &player.playback_health,
         intro_outro: player.intro_outro.as_ref(),
         skip_segment: player.skip_segment.as_ref(),
         skip_intro: player.skip_intro.as_ref(),

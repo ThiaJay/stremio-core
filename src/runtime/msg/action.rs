@@ -20,7 +20,10 @@ use crate::{
         addon::Descriptor,
         api::AuthRequest,
         library::LibraryItemId,
-        player::{AudioPreference, SubtitlePreference, VideoScale},
+        player::{
+            AudioPreference, AvSyncObservation, PlaybackHealthObservation, SubtitlePreference,
+            VideoScale,
+        },
         profile::{AuthKey, Password, Settings as ProfileSettings},
         rating::Rating,
         resource::{MetaItemId, MetaItemPreview, Video},
@@ -232,6 +235,21 @@ pub enum ActionLink {
 #[derive(Clone, Deserialize, Debug)]
 #[serde(tag = "action", content = "args")]
 pub enum ActionPlayer {
+    #[serde(rename_all = "camelCase")]
+    AvSyncV2Observed {
+        observation: crate::types::player::av_sync_v2::Observation,
+        now_ms: u64,
+    },
+    #[serde(rename_all = "camelCase")]
+    AvSyncV2Acknowledged {
+        acknowledgement: crate::types::player::av_sync_v2::Acknowledgement,
+        now_ms: u64,
+    },
+    #[serde(rename_all = "camelCase")]
+    AvSyncV2Tick {
+        session_id: u64,
+        now_ms: u64,
+    },
     /// Dismiss or consume a generation-bound skip segment in the shared player model.
     DismissSkipSegment {
         generation: u64,
@@ -253,6 +271,22 @@ pub enum ActionPlayer {
     },
     StreamStateChanged {
         state: StreamItemState,
+    },
+    /// Reports measured audio/video presentation drift from the active backend.
+    ///
+    /// Core filters transient states and decides whether a correction should be
+    /// requested. Platforms that cannot observe separate clocks should not
+    /// report synthetic samples.
+    AvSyncObserved {
+        observation: AvSyncObservation,
+    },
+    /// Reports independent audio and video health from the active backend.
+    ///
+    /// This is intentionally separate from A/V clock drift. A player switch is
+    /// not considered successful merely because audio starts if video becomes
+    /// unstable as a result.
+    PlaybackHealthObserved {
+        observation: PlaybackHealthObservation,
     },
     /// Updates the audio preference for the current Player session.
     AudioPreferenceChanged {
