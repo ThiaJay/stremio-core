@@ -150,7 +150,9 @@ impl<E: Env + 'static> UpdateWithCtx<E> for MetaDetails {
                         let meta_item = self
                             .meta_items
                             .iter()
-                            .find(|meta_item| matches!(&meta_item.content, Some(Loadable::Ready(_))))
+                            .find(|meta_item| {
+                                matches!(&meta_item.content, Some(Loadable::Ready(_)))
+                            })
                             .and_then(|meta_item| meta_item.content.as_ref())
                             .and_then(|meta_item| meta_item.ready());
 
