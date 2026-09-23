@@ -129,7 +129,10 @@ preamble = '''        let mut sync = self.av_sync_v2.clone();
         let sync_effects = eq_update(&mut self.av_sync_v2, sync);
 '''
 model = once(model, '        let effects = match msg {', preamble + '        let effects = match msg {')
-model = once(model, '        };\n        if matches!(', '        };\n        let effects = effects.join(sync_effects);\n        if matches!(')
+if '        };\n        if matches!(' in model:
+    model = once(model, '        };\n        if matches!(', '        };\n        let effects = effects.join(sync_effects);\n        if matches!(')
+else:
+    model = once(model, '        };\n        let effects = if matches!(', '        };\n        let effects = effects.join(sync_effects);\n        let effects = if matches!(')
 model_path.write_text(model)
 action_path = root / 'src/runtime/msg/action.rs'
 actions = '''pub enum ActionPlayer {
