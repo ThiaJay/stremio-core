@@ -982,7 +982,51 @@
 <a href="#981" id="981">981</a>
 <a href="#982" id="982">982</a>
 <a href="#983" id="983">983</a>
-<a href="#984" id="984">984</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{borrow::Cow, marker::PhantomData};
+<a href="#984" id="984">984</a>
+<a href="#985" id="985">985</a>
+<a href="#986" id="986">986</a>
+<a href="#987" id="987">987</a>
+<a href="#988" id="988">988</a>
+<a href="#989" id="989">989</a>
+<a href="#990" id="990">990</a>
+<a href="#991" id="991">991</a>
+<a href="#992" id="992">992</a>
+<a href="#993" id="993">993</a>
+<a href="#994" id="994">994</a>
+<a href="#995" id="995">995</a>
+<a href="#996" id="996">996</a>
+<a href="#997" id="997">997</a>
+<a href="#998" id="998">998</a>
+<a href="#999" id="999">999</a>
+<a href="#1000" id="1000">1000</a>
+<a href="#1001" id="1001">1001</a>
+<a href="#1002" id="1002">1002</a>
+<a href="#1003" id="1003">1003</a>
+<a href="#1004" id="1004">1004</a>
+<a href="#1005" id="1005">1005</a>
+<a href="#1006" id="1006">1006</a>
+<a href="#1007" id="1007">1007</a>
+<a href="#1008" id="1008">1008</a>
+<a href="#1009" id="1009">1009</a>
+<a href="#1010" id="1010">1010</a>
+<a href="#1011" id="1011">1011</a>
+<a href="#1012" id="1012">1012</a>
+<a href="#1013" id="1013">1013</a>
+<a href="#1014" id="1014">1014</a>
+<a href="#1015" id="1015">1015</a>
+<a href="#1016" id="1016">1016</a>
+<a href="#1017" id="1017">1017</a>
+<a href="#1018" id="1018">1018</a>
+<a href="#1019" id="1019">1019</a>
+<a href="#1020" id="1020">1020</a>
+<a href="#1021" id="1021">1021</a>
+<a href="#1022" id="1022">1022</a>
+<a href="#1023" id="1023">1023</a>
+<a href="#1024" id="1024">1024</a>
+<a href="#1025" id="1025">1025</a>
+<a href="#1026" id="1026">1026</a>
+<a href="#1027" id="1027">1027</a>
+<a href="#1028" id="1028">1028</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{borrow::Cow, marker::PhantomData};
 
 <span class="kw">use </span>chrono::{DateTime, Duration, Utc};
 <span class="kw">use </span>enclose::enclose;
@@ -1127,10 +1171,54 @@
                 live_schedule_refresh_update::&lt;E&gt;(<span class="self">self</span>)
             }
             Msg::Action(Action::MetaDetails(ActionMetaDetails::MarkAsWatched(is_watched))) =&gt; {
-                <span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.library_item {
-                    <span class="prelude-val">Some</span>(library_item) =&gt; {
+                <span class="kw">match </span>(<span class="kw-2">&amp;</span><span class="self">self</span>.library_item, <span class="kw-2">&amp;</span><span class="self">self</span>.watched) {
+                    (<span class="prelude-val">Some</span>(library_item), watched) =&gt; {
                         <span class="kw">let </span><span class="kw-2">mut </span>library_item = library_item.to_owned();
-                        library_item.mark_as_watched::&lt;E&gt;(<span class="kw-2">*</span>is_watched);
+
+                        <span class="kw">let </span>meta_item = <span class="self">self
+                            </span>.meta_items
+                            .iter()
+                            .find(|meta_item| {
+                                <span class="macro">matches!</span>(<span class="kw-2">&amp;</span>meta_item.content, <span class="prelude-val">Some</span>(Loadable::Ready(<span class="kw">_</span>)))
+                            })
+                            .and_then(|meta_item| meta_item.content.as_ref())
+                            .and_then(|meta_item| meta_item.ready());
+
+                        <span class="kw">if </span>library_item.r#type == <span class="string">"series" </span>{
+                            <span class="kw">match </span>(watched, meta_item) {
+                                (<span class="prelude-val">Some</span>(watched), <span class="prelude-val">Some</span>(meta_item)) =&gt; {
+                                    <span class="kw">let </span>videos = meta_item.released_story_videos(<span class="kw-2">&amp;</span>E::now());
+                                    <span class="kw">let </span>watched = library_item.mark_videos_as_watched::&lt;E&gt;(
+                                        watched,
+                                        videos,
+                                        <span class="kw-2">*</span>is_watched,
+                                    );
+
+                                    <span class="kw">if </span><span class="kw-2">*</span>is_watched {
+                                        <span class="kw">if </span>library_item
+                                            .state
+                                            .video_id
+                                            .as_ref()
+                                            .is_some_and(|video_id| watched.get_video(video_id))
+                                        {
+                                            <span class="comment">// Title-level completion means there is no released
+                                            // story episode left to resume. Preserve video_id as
+                                            // history, but remove stale Continue Watching progress.
+                                            </span>library_item.state.time_offset = <span class="number">0</span>;
+                                        }
+                                        library_item.state.times_watched =
+                                            library_item.state.times_watched.saturating_add(<span class="number">1</span>);
+                                        library_item.state.last_watched = <span class="prelude-val">Some</span>(E::now());
+                                    } <span class="kw">else </span>{
+                                        library_item.state.times_watched = <span class="number">0</span>;
+                                    }
+                                }
+                                <span class="kw">_ </span>=&gt; <span class="kw">return </span>Effects::none().unchanged(),
+                            }
+                        } <span class="kw">else </span>{
+                            library_item.mark_as_watched::&lt;E&gt;(<span class="kw-2">*</span>is_watched);
+                        }
+
                         Effects::msg(Msg::Internal(Internal::UpdateLibraryItem(library_item)))
                             .unchanged()
                     }

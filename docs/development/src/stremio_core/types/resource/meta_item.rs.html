@@ -671,7 +671,23 @@
 <a href="#670" id="670">670</a>
 <a href="#671" id="671">671</a>
 <a href="#672" id="672">672</a>
-<a href="#673" id="673">673</a></pre></div><pre class="rust"><code><span class="kw">use </span>core::cmp::Ordering;
+<a href="#673" id="673">673</a>
+<a href="#674" id="674">674</a>
+<a href="#675" id="675">675</a>
+<a href="#676" id="676">676</a>
+<a href="#677" id="677">677</a>
+<a href="#678" id="678">678</a>
+<a href="#679" id="679">679</a>
+<a href="#680" id="680">680</a>
+<a href="#681" id="681">681</a>
+<a href="#682" id="682">682</a>
+<a href="#683" id="683">683</a>
+<a href="#684" id="684">684</a>
+<a href="#685" id="685">685</a>
+<a href="#686" id="686">686</a>
+<a href="#687" id="687">687</a>
+<a href="#688" id="688">688</a>
+<a href="#689" id="689">689</a></pre></div><pre class="rust"><code><span class="kw">use </span>core::cmp::Ordering;
 
 <span class="kw">use </span>std::borrow::Cow;
 <span class="kw">use </span>std::collections::HashMap;
@@ -1000,6 +1016,22 @@
                 .map_or(<span class="bool-val">true</span>, |released| released &lt;= now);
             (next_season != <span class="number">0 </span>|| cur_season == next_season) &amp;&amp; released
         })
+    }
+
+    <span class="doccomment">/// Returns currently released, non-special series videos that are safe to include
+    /// in a title-level watched/unwatched mutation.
+    ///
+    /// A missing release date is not treated as proof that an episode has aired. This
+    /// deliberately fails closed for TBC/future episodes.
+    </span><span class="kw">pub fn </span>released_story_videos(<span class="kw-2">&amp;</span><span class="self">self</span>, now: <span class="kw-2">&amp;</span>DateTime&lt;Utc&gt;) -&gt; Vec&lt;<span class="kw-2">&amp;</span>Video&gt; {
+        <span class="self">self</span>.videos_iter()
+            .filter(|video| {
+                video
+                    .released
+                    .as_ref()
+                    .is_some_and(|released| released &lt;= now)
+            })
+            .collect_vec()
     }
 
     <span class="doccomment">/// Returns a vector of videos for a given season
