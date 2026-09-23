@@ -1,0 +1,97 @@
+name: Android mobile Media3 native runtime acceptance
+
+on:
+  push:
+    branches: [validation/android-mobile-media3-runtime]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-mobile-media3-runtime-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android-mobile-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/checkout@v7
+        with:
+          repository: Stremio/media
+          ref: c1306a42981a2d8eb7c758c3d4e3001c365bc0fd
+          path: .media
+          persist-credentials: false
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Verify immutable source binding
+        run: |
+          set -euo pipefail
+          test "$(git -C .media rev-parse HEAD)" = "c1306a42981a2d8eb7c758c3d4e3001c365bc0fd"
+          test "$(sha256sum .github/android-tv-media3-validation/apply_patch.py | cut -d' ' -f1)" = "52458a7077c8ebea50d2a97ce7831335ac022e1edc2849fb7ebdc4aac0279241"
+          grep -Fq 'releaseVersion = "1.11.1-stremio01"' .media/gradle/libs.versions.toml
+
+      - name: Apply exact validated Media3 candidate
+        run: |
+          set -euo pipefail
+          python3 .github/android-tv-media3-validation/apply_patch.py
+          git -C .media diff --check
+          grep -Fq 'VIDEO_CHANGE_FRAME_RATE_STRATEGY_ALWAYS' .media/demos/main/src/main/java/androidx/media3/demo/main/PlayerActivity.java
+
+      - name: Build native Android demo APK
+        working-directory: .media
+        run: ./gradlew :demo:assembleNoDecoderExtensionsDebug --no-daemon
+
+      - name: Generate deterministic mobile playback fixture
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -hide_banner -loglevel error -y \
+            -f lavfi -i testsrc2=size=640x360:rate=30 \
+            -f lavfi -i sine=frequency=1000:sample_rate=48000 \
+            -t 6 \
+            -c:v libx264 -preset veryfast -pix_fmt yuv420p -profile:v baseline \
+            -c:a aac -b:a 128k -movflags +faststart \
+            mobile-runtime-smoke.mp4
+          test -s mobile-runtime-smoke.mp4
+          mkdir -p evidence/android-mobile-media3
+          sha256sum mobile-runtime-smoke.mp4 \
+            .media/demos/main/buildout/outputs/apk/noDecoderExtensions/debug/demo-noDecoderExtensions-debug.apk \
+            | tee evidence/android-mobile-media3/SHA256SUMS.txt
+          printf '%s\n' \
+            'foundationCandidate=518fb7e933219dbe5c46d4adf1ceeaa29746a424' \
+            'stremioMediaSource=c1306a42981a2d8eb7c758c3d4e3001c365bc0fd' \
+            'candidateScriptBlob=f922610b0b05e55c0822a79e3de1e21de7517187' \
+            'evidenceClass=Android emulator native runtime, not physical device and not private Stremio app adoption' \
+            > evidence/android-mobile-media3/source-binding.txt
+
+      - name: Run genuine Android mobile playback to completion
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: 35
+          arch: x86_64
+          target: default
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-boot-anim -camera-back none
+          script: bash .github/android-mobile-media3-runtime/run.sh
+
+      - name: Preserve native runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-mobile-media3-native-runtime
+          retention-days: 14
+          if-no-files-found: warn
+          path: evidence/android-mobile-media3/
