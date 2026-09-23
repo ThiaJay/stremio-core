@@ -1,0 +1,60 @@
+name: Validate AIOStreams language regression f08510
+
+on:
+  push:
+    branches:
+      - validation/aiostreams-language-f08510-20260923
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out validation branch
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify exact Foundation script bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git hash-object validation/aiostreams-language-regression-f08510.mjs)"
+          expected="130466836164c11cae74372fa062de30caa556f8"
+          test "$actual" = "$expected"
+          printf 'Verified Git blob %s\n' "$actual"
+
+      - name: Run deterministic language regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          node validation/aiostreams-language-regression-f08510.mjs | tee evidence/result.json
+
+      - name: Write source bound receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > evidence/receipt.json <<'JSON'
+          {
+            "foundation_commit": "f08510eca0f004df153aa2c6d9e4eee6616c1de8",
+            "foundation_script_git_blob": "130466836164c11cae74372fa062de30caa556f8",
+            "scope": "deterministic regression only",
+            "live_acceptance": false,
+            "titles": ["Tribes of Europa S01E02", "Welcome to Eden"]
+          }
+          JSON
+
+      - name: Preserve validation evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: aiostreams-language-f08510-proof
+          path: evidence
+          if-no-files-found: error
+          retention-days: 30
