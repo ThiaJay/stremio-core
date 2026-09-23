@@ -38,7 +38,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git -C .media rev-parse HEAD)" = "c1306a42981a2d8eb7c758c3d4e3001c365bc0fd"
-          test "$(sha256sum .github/android-tv-media3-validation/apply_patch.py | cut -d' ' -f1)" = "52458a7077c8ebea50d2a97ce7831335ac022e1edc2849fb7ebdc4aac0279241"
+          test "$(git hash-object .github/android-tv-media3-validation/apply_patch.py)" = "f922610b0b05e55c0822a79e3de1e21de7517187"
           grep -Fq 'releaseVersion = "1.11.1-stremio01"' .media/gradle/libs.versions.toml
 
       - name: Apply exact validated Media3 candidate
