@@ -329,6 +329,22 @@ impl MetaItem {
         })
     }
 
+    /// Returns currently released, non-special series videos that are safe to include
+    /// in a title-level watched/unwatched mutation.
+    ///
+    /// A missing release date is not treated as proof that an episode has aired. This
+    /// deliberately fails closed for TBC/future episodes.
+    pub fn released_story_videos(&self, now: &DateTime<Utc>) -> Vec<&Video> {
+        self.videos_iter()
+            .filter(|video| {
+                video
+                    .released
+                    .as_ref()
+                    .is_some_and(|released| released <= now)
+            })
+            .collect_vec()
+    }
+
     /// Returns a vector of videos for a given season
     pub fn videos_by_season(&self, season: u32) -> Vec<&Video> {
         self.videos

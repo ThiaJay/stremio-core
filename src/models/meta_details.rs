@@ -143,10 +143,51 @@ impl<E: Env + 'static> UpdateWithCtx<E> for MetaDetails {
                 live_schedule_refresh_update::<E>(self)
             }
             Msg::Action(Action::MetaDetails(ActionMetaDetails::MarkAsWatched(is_watched))) => {
-                match &self.library_item {
-                    Some(library_item) => {
+                match (&self.library_item, &self.watched) {
+                    (Some(library_item), watched) => {
                         let mut library_item = library_item.to_owned();
-                        library_item.mark_as_watched::<E>(*is_watched);
+
+                        let meta_item = self
+                            .meta_items
+                            .iter()
+                            .find(|meta_item| {
+                                matches!(&meta_item.content, Some(Loadable::Ready(_)))
+                            })
+                            .and_then(|meta_item| meta_item.content.as_ref())
+                            .and_then(|meta_item| meta_item.ready());
+
+                        if library_item.r#type == "series" {
+                            match (watched, meta_item) {
+                                (Some(watched), Some(meta_item)) => {
+                                    let videos = meta_item.released_story_videos(&E::now());
+                                    let watched = library_item.mark_videos_as_watched::<E>(
+                                        watched,
+                                        videos,
+                                        *is_watched,
+                                    );
+
+                                    if *is_watched {
+                                        if library_item
+                                            .state
+                                            .video_id
+                                            .as_ref()
+                                            .is_some_and(|video_id| watched.get_video(video_id))
+                                        {
+                                            library_item.state.time_offset = 0;
+                                        }
+                                        library_item.state.times_watched =
+                                            library_item.state.times_watched.saturating_add(1);
+                                        library_item.state.last_watched = Some(E::now());
+                                    } else {
+                                        library_item.state.times_watched = 0;
+                                    }
+                                }
+                                _ => return Effects::none().unchanged(),
+                            }
+                        } else {
+                            library_item.mark_as_watched::<E>(*is_watched);
+                        }
+
                         Effects::msg(Msg::Internal(Internal::UpdateLibraryItem(library_item)))
                             .unchanged()
                     }
