@@ -1,0 +1,139 @@
+name: Android TV Media3 harness 518fb7e validation
+
+on:
+  push:
+    branches:
+      - validation/android-tv-media3-harness-518fb7e
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-tv-media3-harness-518fb7e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-media3-and-harness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Verify exact Foundation harness binding
+        shell: bash
+        run: |
+          set -euo pipefail
+          harness=.github/android-tv-media3-validation/Run-AndroidTvAcceptance.ps1
+          test "$(git hash-object "$harness")" = "74ad350de512020d54c0012e0d14c98df2416c45"
+          grep -Fq '$ErrorActionPreference = "Stop"' "$harness"
+          grep -Fq '$ErrorActionPreference = "Continue"' "$harness"
+          grep -Fq '$ErrorActionPreference = $previousErrorActionPreference' "$harness"
+          grep -Fq 'android.permission.READ_MEDIA_VIDEO' "$harness"
+          grep -Fq 'android.permission.READ_EXTERNAL_STORAGE' "$harness"
+          grep -Fq 'if ($LASTEXITCODE -ne 0) { throw "Failed to push fixture' "$harness"
+          grep -Fq 'if ($LASTEXITCODE -ne 0) { throw "Failed to launch' "$harness"
+
+      - name: Parse PowerShell harness
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path '.github/android-tv-media3-validation/Run-AndroidTvAcceptance.ps1'),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -ne 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
+
+      - uses: actions/checkout@v7
+        with:
+          repository: Stremio/media
+          ref: c1306a42981a2d8eb7c758c3d4e3001c365bc0fd
+          path: .media
+          persist-credentials: false
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Verify exact upstream source
+        run: |
+          set -euo pipefail
+          test "$(git -C .media rev-parse HEAD)" = "c1306a42981a2d8eb7c758c3d4e3001c365bc0fd"
+          grep -Fq 'releaseVersion = "1.11.1-stremio01"' .media/gradle/libs.versions.toml
+          grep -Fq 'compileSdkVersion = "36"' .media/gradle/libs.versions.toml
+          grep -Fq 'libTestTargetSdkVersion = "36"' .media/gradle/libs.versions.toml
+          grep -Fq 'robolectricVersion = "4.16"' .media/gradle/libs.versions.toml
+
+      - name: Apply candidate
+        run: python3 .github/android-tv-media3-validation/apply_patch.py
+
+      - name: Inspect patch
+        run: |
+          set -euo pipefail
+          git -C .media diff --check
+          git -C .media diff --binary > media3-av-sync.patch
+          test -s media3-av-sync.patch
+
+      - name: Run focused and existing frame release tests
+        working-directory: .media
+        run: |
+          ./gradlew :lib-exoplayer:testDebugUnitTest \
+            --tests "androidx.media3.exoplayer.video.StremioFrameRateSwitchTest" \
+            --tests "androidx.media3.exoplayer.video.VideoFrameReleaseHelperTest" \
+            --tests "androidx.media3.exoplayer.video.VideoFrameReleaseControlTest" \
+            --no-daemon --stacktrace
+
+      - name: Android lint and release builds
+        working-directory: .media
+        run: |
+          ./gradlew :lib-exoplayer:lintDebug --no-daemon
+          ./gradlew :lib-exoplayer:assembleRelease --no-daemon
+          ./gradlew :demo:assembleNoDecoderExtensionsDebug --no-daemon
+
+      - name: Collect exact candidate binaries
+        run: |
+          set -euo pipefail
+          mkdir -p android-tv-media3-candidate
+          aar=.media/libraries/exoplayer/buildout/outputs/aar/lib-exoplayer-release.aar
+          apk=.media/demos/main/buildout/outputs/apk/noDecoderExtensions/debug/demo-noDecoderExtensions-debug.apk
+          test -s "$aar"
+          test -s "$apk"
+          cp "$aar" android-tv-media3-candidate/media3-exoplayer.aar
+          cp "$apk" android-tv-media3-candidate/media3-demo.apk
+          cp media3-av-sync.patch android-tv-media3-candidate/media3-av-sync.patch
+          cp .github/android-tv-media3-validation/apply_patch.py android-tv-media3-candidate/apply_patch.py
+          cp .github/android-tv-media3-validation/Run-AndroidTvAcceptance.ps1 android-tv-media3-candidate/Run-AndroidTvAcceptance.ps1
+          printf 'validationRepository=ThiaJay/stremio-core\nvalidationCommit=%s\nfoundationHead=518fb7e933219dbe5c46d4adf1ceeaa29746a424\nfoundationParent=26c3585f7e38c1eac6b483ff74c2eb197e6398df\nfoundationHarnessBlob=74ad350de512020d54c0012e0d14c98df2416c45\nstremioMediaSource=c1306a42981a2d8eb7c758c3d4e3001c365bc0fd\njava=21\n' "$GITHUB_SHA" > android-tv-media3-candidate/SOURCE_BINDING.txt
+
+      - name: Generate deterministic flash click fixtures
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          python3 .github/android-tv-media3-validation/generate_fixtures.py
+          mkdir -p android-tv-media3-candidate/fixtures
+          cp .github/android-tv-media3-validation/fixtures/*.mp4 android-tv-media3-candidate/fixtures/
+          test "$(find android-tv-media3-candidate/fixtures -type f -name 'flash-click-*.mp4' | wc -l)" -eq 8
+
+      - name: Hash all release evidence
+        run: |
+          set -euo pipefail
+          find android-tv-media3-candidate -type f ! -name SHA256SUMS.txt -print0 \
+            | sort -z \
+            | xargs -0 sha256sum > android-tv-media3-candidate/SHA256SUMS.txt
+          cat android-tv-media3-candidate/SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-tv-media3-api36-harness-518fb7e-candidate
+          retention-days: 7
+          if-no-files-found: error
+          path: android-tv-media3-candidate/
