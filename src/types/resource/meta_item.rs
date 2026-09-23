@@ -336,7 +336,12 @@ impl MetaItem {
     /// deliberately fails closed for TBC/future episodes.
     pub fn released_story_videos(&self, now: &DateTime<Utc>) -> Vec<&Video> {
         self.videos_iter()
-            .filter(|video| video.released.as_ref().is_some_and(|released| released <= now))
+            .filter(|video| {
+                video
+                    .released
+                    .as_ref()
+                    .is_some_and(|released| released <= now)
+            })
             .collect_vec()
     }
 
