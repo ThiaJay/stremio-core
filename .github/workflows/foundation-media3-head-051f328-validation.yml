@@ -184,3 +184,4 @@ jobs:
           if (($calls | Select-String 'shell pm grant').Count -ne 2) { throw 'Optional permission grants were not both exercised' }
           if (($calls | Select-String '^push ').Count -lt 1) { throw 'Harness stopped during optional grant instead of reaching the hard push gate' }
           Write-Host 'Optional permission rejection was tolerated and a later hard gate still failed closed.'
+          exit 0
