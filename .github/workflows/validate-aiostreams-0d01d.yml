@@ -1,0 +1,61 @@
+name: Validate AIOStreams language regression 0d01d
+
+on:
+  push:
+    branches:
+      - validation/aiostreams-language-0d01d-20260923
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out validation branch
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify exact Foundation script bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git hash-object validation/aiostreams-language-regression-0d01d.mjs)"
+          expected="4e0beb7edd2c08fb912f337d216a577eb55ee036"
+          test "$actual" = "$expected"
+          printf 'Verified Git blob %s\n' "$actual"
+
+      - name: Run deterministic language regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          node validation/aiostreams-language-regression-0d01d.mjs | tee evidence/result.json
+
+      - name: Write source bound receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > evidence/receipt.json <<'JSON'
+          {
+            "foundation_commit": "0d01d75f197b6746cea2f4b3bfd6666f0250fbf8",
+            "foundation_script_git_blob": "4e0beb7edd2c08fb912f337d216a577eb55ee036",
+            "scope": "deterministic regression only",
+            "live_acceptance": false,
+            "titles": ["Tribes of Europa S01E02", "Welcome to Eden"],
+            "additional_gate": "Dubbed language label ranks ahead of Original fallback"
+          }
+          JSON
+
+      - name: Preserve validation evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: aiostreams-language-0d01d-proof
+          path: evidence
+          if-no-files-found: error
+          retention-days: 30
