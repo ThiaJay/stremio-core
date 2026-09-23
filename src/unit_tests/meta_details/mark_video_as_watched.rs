@@ -47,7 +47,6 @@ fn create_released_video(season: u32, episode: u32, released: DateTime<Utc>) -> 
     }
 }
 
-
 fn fetch_handler(request: Request) -> TryEnvFuture<Box<dyn Any + Send>> {
     match request {
         Request { url, .. } if url == "https://v3-cinemeta.strem.io/meta/series/tt123456.json" => {
@@ -236,9 +235,18 @@ fn mark_title_as_watched_marks_only_released_story_episodes_and_clears_progress(
 
         assert!(watched.get_video("tt123456:1:1"));
         assert!(watched.get_video("tt123456:1:2"));
-        assert!(!watched.get_video("tt123456:1:3"), "future episode must stay unwatched");
-        assert!(!watched.get_video("tt123456:2:1"), "TBC episode must stay unwatched");
-        assert!(!watched.get_video("tt123456:0:1"), "season 0 special must stay untouched");
+        assert!(
+            !watched.get_video("tt123456:1:3"),
+            "future episode must stay unwatched"
+        );
+        assert!(
+            !watched.get_video("tt123456:2:1"),
+            "TBC episode must stay unwatched"
+        );
+        assert!(
+            !watched.get_video("tt123456:0:1"),
+            "season 0 special must stay untouched"
+        );
         assert_eq!(library_item.state.time_offset, 0);
         assert_eq!(library_item.state.video_id.as_deref(), Some("tt123456:1:2"));
         assert!(library_item.state.times_watched > 0);
