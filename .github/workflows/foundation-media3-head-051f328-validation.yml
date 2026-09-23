@@ -1,0 +1,186 @@
+name: Foundation Media3 051f328 redundant validation
+
+on:
+  push:
+    branches:
+      - validation/foundation-media3-head-051f328-20260923
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: foundation-media3-head-051f328-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-source-bound-media3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Bind exact Foundation head inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git hash-object .github/android-tv-media3-validation/apply_patch.py)" = "f922610b0b05e55c0822a79e3de1e21de7517187"
+          test "$(git hash-object .github/android-tv-media3-validation/generate_fixtures.py)" = "445cb09658c40080c303844da5b9b5f0d3b95366"
+          test "$(git hash-object .github/foundation-media3-head/Run-AndroidTvAcceptance.ps1)" = "74ad350de512020d54c0012e0d14c98df2416c45"
+          test "$(git hash-object .github/foundation-media3-head/analyse_flash_click.py)" = "1d1377fab90a4d526eb5da2b053f17f652fcc656"
+          test "$(git hash-object .github/foundation-media3-head/test_analyse_flash_click.py)" = "015ce06baa1268936a9086449cbcb7ed9f458876"
+          test "$(sha256sum .github/foundation-media3-head/analyse_flash_click.py | cut -d' ' -f1)" = "ee057c4c79b30e6561bd4b2ba21171e68dfb5c46417e310e6746e3f2d4bb8666"
+          test "$(sha256sum .github/foundation-media3-head/test_analyse_flash_click.py | cut -d' ' -f1)" = "d153cf077d7a0da7f95eb70e6f3b3b8faa0ef447f1b3dfd31c7953afcfa537f0"
+          printf '%s\n' \
+            'foundationHead=051f328265722142a956c48ff0853b7618acf4fc' \
+            'foundationBaseHead=518fb7e933219dbe5c46d4adf1ceeaa29746a424' \
+            'applyPatchBlob=f922610b0b05e55c0822a79e3de1e21de7517187' \
+            'fixtureGeneratorBlob=445cb09658c40080c303844da5b9b5f0d3b95366' \
+            'acceptanceHarnessBlob=74ad350de512020d54c0012e0d14c98df2416c45' \
+            'physicalAnalyserBlob=1d1377fab90a4d526eb5da2b053f17f652fcc656' \
+            'physicalAnalyserTestBlob=015ce06baa1268936a9086449cbcb7ed9f458876' \
+            'stremioMediaHead=c1306a42981a2d8eb7c758c3d4e3001c365bc0fd' \
+            > foundation-source-binding.txt
+      - uses: actions/checkout@v7
+        with:
+          repository: Stremio/media
+          ref: c1306a42981a2d8eb7c758c3d4e3001c365bc0fd
+          path: .media
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+      - name: Verify exact upstream source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C .media rev-parse HEAD)" = "c1306a42981a2d8eb7c758c3d4e3001c365bc0fd"
+          grep -Fq 'releaseVersion = "1.11.1-stremio01"' .media/gradle/libs.versions.toml
+          grep -Fq 'compileSdkVersion = "36"' .media/gradle/libs.versions.toml
+          grep -Fq 'libTestTargetSdkVersion = "36"' .media/gradle/libs.versions.toml
+          grep -Fq 'robolectricVersion = "4.16"' .media/gradle/libs.versions.toml
+      - name: Apply exact candidate
+        run: python3 .github/android-tv-media3-validation/apply_patch.py
+      - name: Inspect candidate patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C .media diff --check
+          git -C .media diff --binary > media3-av-sync.patch
+          test -s media3-av-sync.patch
+      - name: Run focused and existing frame release tests
+        working-directory: .media
+        run: |
+          ./gradlew :lib-exoplayer:testDebugUnitTest \
+            --tests "androidx.media3.exoplayer.video.StremioFrameRateSwitchTest" \
+            --tests "androidx.media3.exoplayer.video.VideoFrameReleaseHelperTest" \
+            --tests "androidx.media3.exoplayer.video.VideoFrameReleaseControlTest" \
+            --no-daemon --stacktrace
+      - name: Android lint and release builds
+        working-directory: .media
+        run: |
+          ./gradlew :lib-exoplayer:lintDebug --no-daemon
+          ./gradlew :lib-exoplayer:assembleRelease --no-daemon
+          ./gradlew :demo:assembleNoDecoderExtensionsDebug --no-daemon
+      - name: Generate deterministic flash click fixtures and validate physical analyser
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          python3 -m pip install --disable-pip-version-check numpy
+          python3 .github/android-tv-media3-validation/generate_fixtures.py
+          test "$(find .github/android-tv-media3-validation/fixtures -type f -name 'flash-click-*.mp4' | wc -l)" -eq 8
+          python3 .github/foundation-media3-head/test_analyse_flash_click.py | tee physical-analyser-regression.txt
+      - name: Preserve redundant validation receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p redundant-validation
+          cp foundation-source-binding.txt redundant-validation/
+          cp media3-av-sync.patch redundant-validation/
+          cp physical-analyser-regression.txt redundant-validation/
+          sha256sum media3-av-sync.patch > redundant-validation/SHA256SUMS.txt
+          sha256sum .github/foundation-media3-head/analyse_flash_click.py >> redundant-validation/SHA256SUMS.txt
+          sha256sum .github/foundation-media3-head/test_analyse_flash_click.py >> redundant-validation/SHA256SUMS.txt
+          aar=.media/libraries/exoplayer/buildout/outputs/aar/lib-exoplayer-release.aar
+          apk=.media/demos/main/buildout/outputs/apk/noDecoderExtensions/debug/demo-noDecoderExtensions-debug.apk
+          test -s "$aar"
+          test -s "$apk"
+          sha256sum "$aar" "$apk" >> redundant-validation/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: foundation-media3-head-051f328-software-proof
+          retention-days: 14
+          if-no-files-found: error
+          path: redundant-validation/
+
+  validate-acceptance-harness:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Verify exact harness blob and PowerShell syntax
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $path = '.github/foundation-media3-head/Run-AndroidTvAcceptance.ps1'
+          if ((git hash-object $path).Trim() -ne '74ad350de512020d54c0012e0d14c98df2416c45') { throw 'Foundation harness blob mismatch' }
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $path), [ref]$tokens, [ref]$errors)
+          if ($errors.Count -ne 0) { $errors | Format-List | Out-String | Write-Error; throw 'PowerShell parse failed' }
+      - name: Prove optional grant failures do not bypass later fail closed gate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:RUNNER_TEMP 'foundation-media3-harness-test'
+          $mock = Join-Path $root 'mock'
+          $fixtures = Join-Path $root 'fixtures'
+          $out = Join-Path $root 'out'
+          New-Item -ItemType Directory -Force -Path $mock,$fixtures,$out | Out-Null
+          $apk = Join-Path $root 'candidate.apk'
+          Set-Content -LiteralPath $apk -Value 'candidate'
+          1..8 | ForEach-Object { Set-Content -LiteralPath (Join-Path $fixtures ("flash-click-{0}.mp4" -f $_)) -Value 'fixture' }
+          $env:MOCK_ADB_LOG = Join-Path $root 'adb.log'
+          $adb = @'
+          @echo off
+          echo %*>>"%MOCK_ADB_LOG%"
+          if "%1"=="devices" (
+            echo List of devices attached
+            echo test-serial device product:test model:test device:test transport_id:1
+            exit /b 0
+          )
+          if "%1"=="install" (
+            echo Success
+            exit /b 0
+          )
+          if "%1"=="shell" if "%2"=="pm" if "%3"=="grant" (
+            echo mock optional permission rejection 1>&2
+            exit /b 1
+          )
+          if "%1"=="shell" if "%2"=="mkdir" exit /b 0
+          if "%1"=="push" (
+            echo mock hard push failure 1>&2
+            exit /b 42
+          )
+          exit /b 0
+          '@
+          Set-Content -LiteralPath (Join-Path $mock 'adb.cmd') -Value $adb -Encoding Ascii
+          $env:PATH = "$mock;$env:PATH"
+          $failedAsExpected = $false
+          try {
+            & '.github/foundation-media3-head/Run-AndroidTvAcceptance.ps1' -ApkPath $apk -FixtureDirectory $fixtures -Output $out -PerFixtureSeconds 1 -SoakSeconds 1
+          } catch {
+            $failedAsExpected = $true
+          }
+          if (-not $failedAsExpected) { throw 'Harness unexpectedly passed mock hard failure' }
+          $calls = Get-Content -LiteralPath $env:MOCK_ADB_LOG
+          if (($calls | Select-String 'shell pm grant').Count -ne 2) { throw 'Optional permission grants were not both exercised' }
+          if (($calls | Select-String '^push ').Count -lt 1) { throw 'Harness stopped during optional grant instead of reaching the hard push gate' }
+          Write-Host 'Optional permission rejection was tolerated and a later hard gate still failed closed.'
