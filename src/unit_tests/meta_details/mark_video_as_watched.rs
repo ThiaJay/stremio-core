@@ -40,6 +40,14 @@ fn create_video(season: u32, episode: u32) -> Video {
     }
 }
 
+fn create_released_video(season: u32, episode: u32, released: DateTime<Utc>) -> Video {
+    Video {
+        released: Some(released),
+        ..create_video(season, episode)
+    }
+}
+
+
 fn fetch_handler(request: Request) -> TryEnvFuture<Box<dyn Any + Send>> {
     match request {
         Request { url, .. } if url == "https://v3-cinemeta.strem.io/meta/series/tt123456.json" => {
@@ -174,6 +182,121 @@ fn load_selected_video(runtime: &Runtime<TestEnv, TestModel>, video_id: &str) {
                 guess_stream: false,
             })),
         });
+    });
+}
+
+#[test]
+fn mark_title_as_watched_marks_only_released_story_episodes_and_clears_progress() {
+    let _env_mutex = TestEnv::reset().expect("Should have exclusive lock to TestEnv");
+    let now = Utc::now();
+    *FETCH_HANDLER.write().unwrap() = Box::new(move |request: Request| match request {
+        Request { url, .. } if url == "https://v3-cinemeta.strem.io/meta/series/tt123456.json" => {
+            future::ok(Box::new(ResourceResponse::Meta {
+                meta: MetaItem {
+                    preview: MetaItemPreview {
+                        id: "tt123456".to_owned(),
+                        r#type: "series".to_owned(),
+                        ..Default::default()
+                    },
+                    videos: vec![
+                        create_released_video(1, 1, now - Duration::days(2)),
+                        create_released_video(1, 2, now - Duration::days(1)),
+                        create_released_video(1, 3, now + Duration::days(1)),
+                        create_video(2, 1),
+                        create_released_video(0, 1, now - Duration::days(3)),
+                    ],
+                },
+            }) as Box<dyn Any + Send>)
+            .boxed_env()
+        }
+        _ => default_fetch_handler(request),
+    });
+
+    let library_item = create_library_item("tt123456:1:2");
+    run_with_library_item(library_item, |runtime| {
+        load_selected_video(&runtime, "tt123456:1:2");
+
+        TestEnv::run(|| {
+            runtime.dispatch(RuntimeAction {
+                field: None,
+                action: Action::MetaDetails(ActionMetaDetails::MarkAsWatched(true)),
+            });
+        });
+
+        let model = runtime.model().unwrap();
+        let library_item = model.ctx.library.items.get("tt123456").unwrap();
+        let videos = vec![
+            create_released_video(1, 1, now - Duration::days(2)),
+            create_released_video(1, 2, now - Duration::days(1)),
+            create_released_video(1, 3, now + Duration::days(1)),
+            create_video(2, 1),
+            create_released_video(0, 1, now - Duration::days(3)),
+        ];
+        let watched = library_item.state.watched_bitfield(&videos);
+
+        assert!(watched.get_video("tt123456:1:1"));
+        assert!(watched.get_video("tt123456:1:2"));
+        assert!(!watched.get_video("tt123456:1:3"), "future episode must stay unwatched");
+        assert!(!watched.get_video("tt123456:2:1"), "TBC episode must stay unwatched");
+        assert!(!watched.get_video("tt123456:0:1"), "season 0 special must stay untouched");
+        assert_eq!(library_item.state.time_offset, 0);
+        assert_eq!(library_item.state.video_id.as_deref(), Some("tt123456:1:2"));
+        assert!(library_item.state.times_watched > 0);
+    });
+}
+
+#[test]
+fn mark_title_as_unwatched_does_not_invent_or_clear_resume_progress() {
+    let _env_mutex = TestEnv::reset().expect("Should have exclusive lock to TestEnv");
+    let now = Utc::now();
+    *FETCH_HANDLER.write().unwrap() = Box::new(move |request: Request| match request {
+        Request { url, .. } if url == "https://v3-cinemeta.strem.io/meta/series/tt123456.json" => {
+            future::ok(Box::new(ResourceResponse::Meta {
+                meta: MetaItem {
+                    preview: MetaItemPreview {
+                        id: "tt123456".to_owned(),
+                        r#type: "series".to_owned(),
+                        ..Default::default()
+                    },
+                    videos: vec![
+                        create_released_video(1, 1, now - Duration::days(2)),
+                        create_released_video(1, 2, now - Duration::days(1)),
+                    ],
+                },
+            }) as Box<dyn Any + Send>)
+            .boxed_env()
+        }
+        _ => default_fetch_handler(request),
+    });
+
+    let mut library_item = create_library_item("tt123456:1:2");
+    let videos = vec![
+        create_released_video(1, 1, now - Duration::days(2)),
+        create_released_video(1, 2, now - Duration::days(1)),
+    ];
+    let mut watched = library_item.state.watched_bitfield(&videos);
+    watched.set_video("tt123456:1:1", true);
+    watched.set_video("tt123456:1:2", true);
+    library_item.state.watched = Some(watched.into());
+    library_item.state.times_watched = 1;
+
+    run_with_library_item(library_item, |runtime| {
+        load_selected_video(&runtime, "tt123456:1:2");
+        TestEnv::run(|| {
+            runtime.dispatch(RuntimeAction {
+                field: None,
+                action: Action::MetaDetails(ActionMetaDetails::MarkAsWatched(false)),
+            });
+        });
+
+        let model = runtime.model().unwrap();
+        let library_item = model.ctx.library.items.get("tt123456").unwrap();
+        let watched = library_item.state.watched_bitfield(&videos);
+        assert!(!watched.get_video("tt123456:1:1"));
+        assert!(!watched.get_video("tt123456:1:2"));
+        assert_eq!(library_item.state.time_offset, PREVIOUS_TIME_WATCHED);
+        assert_eq!(library_item.state.video_id.as_deref(), Some("tt123456:1:2"));
+        assert_eq!(library_item.state.times_watched, 0);
     });
 }
 

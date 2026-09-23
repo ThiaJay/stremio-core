@@ -159,7 +159,9 @@ pub enum ActionMetaDetails {
     RefreshLive,
     /// Marks the [`LibraryItem`] as watched.
     ///
-    /// Applicable when you have single-video (e.g. a movie) and multi-video (e.g. a movie series) item.
+    /// For series this applies the watched state to all currently released,
+    /// non-special episodes known to the active metadata item. Future/TBC
+    /// episodes are left unchanged.
     ///
     /// [`LibraryItem`]: crate::types::library::LibraryItem
     MarkAsWatched(bool),
