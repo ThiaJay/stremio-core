@@ -601,7 +601,15 @@
 <a href="#600" id="600">600</a>
 <a href="#601" id="601">601</a>
 <a href="#602" id="602">602</a>
-<a href="#603" id="603">603</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{collections::HashMap, marker::PhantomData};
+<a href="#603" id="603">603</a>
+<a href="#604" id="604">604</a>
+<a href="#605" id="605">605</a>
+<a href="#606" id="606">606</a>
+<a href="#607" id="607">607</a>
+<a href="#608" id="608">608</a>
+<a href="#609" id="609">609</a>
+<a href="#610" id="610">610</a>
+<a href="#611" id="611">611</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{collections::HashMap, marker::PhantomData};
 
 <span class="kw">use </span>futures::{
     future::{<span class="self">self</span>, Either},
@@ -746,19 +754,27 @@
         },
         Msg::Action(Action::Ctx(ActionCtx::LibraryItemMarkAsWatched { id, is_watched })) =&gt; {
             <span class="kw">match </span>library.items.get(id) {
-                <span class="prelude-val">Some</span>(library_item) =&gt; {
+                <span class="prelude-val">Some</span>(library_item) <span class="kw">if </span>library_item.r#type != <span class="string">"series" </span>=&gt; {
                     <span class="kw">let </span><span class="kw-2">mut </span>library_item = library_item.to_owned();
                     library_item.mark_as_watched::&lt;E&gt;(<span class="kw-2">*</span>is_watched);
                     Effects::msg(Msg::Internal(Internal::UpdateLibraryItem(library_item)))
                         .unchanged()
                 }
-                <span class="kw">_ </span>=&gt; Effects::none().unchanged(),
+                <span class="comment">// A series title cannot be safely marked from LibraryItem state alone because
+                // its canonical episode bitmap requires loaded metadata. Clients must use
+                // MetaDetails::MarkAsWatched after metadata is ready.
+                </span><span class="prelude-val">Some</span>(<span class="kw">_</span>) | <span class="prelude-val">None </span>=&gt; Effects::none().unchanged(),
             }
         }
         Msg::Action(Action::Ctx(ActionCtx::MetaItemMarkAsWatched {
             meta_item,
             is_watched,
         })) =&gt; {
+            <span class="comment">// MetaItemPreview has no episode list, so a series mutation here cannot update the
+            // watched bitmap safely. Require the loaded MetaDetails path for series.
+            </span><span class="kw">if </span>meta_item.r#type == <span class="string">"series" </span>{
+                <span class="kw">return </span>Effects::none().unchanged();
+            }
             <span class="kw">let </span><span class="kw-2">mut </span>library_item = <span class="kw">match </span>library.items.get(<span class="kw-2">&amp;</span>meta_item.id) {
                 <span class="prelude-val">Some</span>(library_item) =&gt; library_item.to_owned(),
                 <span class="kw">_ if </span><span class="kw-2">*</span>is_watched =&gt; LibraryItem::from((meta_item, PhantomData::&lt;E&gt;)),
