@@ -26,7 +26,7 @@ use crate::{
         },
         profile::{AuthKey, Password, Settings as ProfileSettings},
         rating::Rating,
-        resource::{MetaItemId, MetaItemPreview, Video},
+        resource::{MetaItemId, MetaItemPreview, Stream, Video},
         streaming_server::{
             Settings as StreamingServerSettings,
             StatisticsRequest as StreamingServerStatisticsRequest,
@@ -178,6 +178,8 @@ pub enum ActionMetaDetails {
     /// `time` is in milliseconds.
     #[serde(rename_all = "camelCase")]
     ExternalPlayerProgressChanged { time: u64 },
+    /// Records the given [`Stream`] as the last used one after opening it in an external player.
+    ExternalPlayerStreamOpened(Stream),
     /// Rate the current meta item
     Rate(Option<Rating>),
 }
