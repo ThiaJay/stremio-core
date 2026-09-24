@@ -1026,7 +1026,45 @@
 <a href="#1025" id="1025">1025</a>
 <a href="#1026" id="1026">1026</a>
 <a href="#1027" id="1027">1027</a>
-<a href="#1028" id="1028">1028</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{borrow::Cow, marker::PhantomData};
+<a href="#1028" id="1028">1028</a>
+<a href="#1029" id="1029">1029</a>
+<a href="#1030" id="1030">1030</a>
+<a href="#1031" id="1031">1031</a>
+<a href="#1032" id="1032">1032</a>
+<a href="#1033" id="1033">1033</a>
+<a href="#1034" id="1034">1034</a>
+<a href="#1035" id="1035">1035</a>
+<a href="#1036" id="1036">1036</a>
+<a href="#1037" id="1037">1037</a>
+<a href="#1038" id="1038">1038</a>
+<a href="#1039" id="1039">1039</a>
+<a href="#1040" id="1040">1040</a>
+<a href="#1041" id="1041">1041</a>
+<a href="#1042" id="1042">1042</a>
+<a href="#1043" id="1043">1043</a>
+<a href="#1044" id="1044">1044</a>
+<a href="#1045" id="1045">1045</a>
+<a href="#1046" id="1046">1046</a>
+<a href="#1047" id="1047">1047</a>
+<a href="#1048" id="1048">1048</a>
+<a href="#1049" id="1049">1049</a>
+<a href="#1050" id="1050">1050</a>
+<a href="#1051" id="1051">1051</a>
+<a href="#1052" id="1052">1052</a>
+<a href="#1053" id="1053">1053</a>
+<a href="#1054" id="1054">1054</a>
+<a href="#1055" id="1055">1055</a>
+<a href="#1056" id="1056">1056</a>
+<a href="#1057" id="1057">1057</a>
+<a href="#1058" id="1058">1058</a>
+<a href="#1059" id="1059">1059</a>
+<a href="#1060" id="1060">1060</a>
+<a href="#1061" id="1061">1061</a>
+<a href="#1062" id="1062">1062</a>
+<a href="#1063" id="1063">1063</a>
+<a href="#1064" id="1064">1064</a>
+<a href="#1065" id="1065">1065</a>
+<a href="#1066" id="1066">1066</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{borrow::Cow, marker::PhantomData};
 
 <span class="kw">use </span>chrono::{DateTime, Duration, Utc};
 <span class="kw">use </span>enclose::enclose;
@@ -1299,6 +1337,14 @@
                 <span class="kw-2">&amp;</span><span class="self">self</span>.library_item,
                 <span class="kw-2">&amp;</span><span class="self">self</span>.watched,
                 <span class="kw-2">*</span>time,
+            ),
+            Msg::Action(Action::MetaDetails(ActionMetaDetails::ExternalPlayerStreamOpened(
+                stream,
+            ))) =&gt; external_player_stream_opened(
+                stream,
+                <span class="kw-2">&amp;</span><span class="self">self</span>.meta_items,
+                <span class="kw-2">&amp;</span><span class="self">self</span>.meta_streams,
+                <span class="kw-2">&amp;</span><span class="self">self</span>.streams,
             ),
             Msg::Action(Action::MetaDetails(ActionMetaDetails::Rate(rating)))
                 <span class="kw">if </span><span class="self">self</span>.rating_info.is_some() =&gt;
@@ -1594,6 +1640,36 @@
     }
 
     Effects::msg(Msg::Internal(Internal::UpdateLibraryItem(library_item))).unchanged()
+}
+
+<span class="kw">fn </span>external_player_stream_opened(
+    stream: <span class="kw-2">&amp;</span>Stream,
+    meta_items: <span class="kw-2">&amp;</span>[ResourceLoadable&lt;MetaItem&gt;],
+    meta_streams: <span class="kw-2">&amp;</span>[ResourceLoadable&lt;Vec&lt;Stream&gt;&gt;],
+    streams: <span class="kw-2">&amp;</span>[ResourceLoadable&lt;Vec&lt;Stream&gt;&gt;],
+) -&gt; Effects {
+    <span class="kw">let </span>meta_item = meta_items
+        .iter()
+        .find(|meta_item| <span class="macro">matches!</span>(meta_item.content, <span class="prelude-val">Some</span>(Loadable::Ready(<span class="kw">_</span>))));
+    <span class="kw">let </span>stream_request = meta_streams
+        .iter()
+        .chain(streams)
+        .find(|resource| <span class="kw">match </span><span class="kw-2">&amp;</span>resource.content {
+            <span class="prelude-val">Some</span>(Loadable::Ready(streams)) =&gt; streams.contains(stream),
+            <span class="kw">_ </span>=&gt; <span class="bool-val">false</span>,
+        })
+        .map(|resource| resource.request.to_owned());
+    <span class="kw">match </span>(meta_item, stream_request) {
+        (<span class="prelude-val">Some</span>(meta_item), <span class="prelude-val">Some</span>(stream_request)) =&gt; {
+            Effects::msg(Msg::Internal(Internal::StreamLoaded {
+                stream: stream.to_owned(),
+                stream_request: <span class="prelude-val">Some</span>(stream_request),
+                meta_item: meta_item.to_owned(),
+            }))
+            .unchanged()
+        }
+        <span class="kw">_ </span>=&gt; Effects::none().unchanged(),
+    }
 }
 
 <span class="kw">fn </span>library_item_sync(library_item: <span class="kw-2">&amp;</span><span class="prelude-ty">Option</span>&lt;LibraryItem&gt;, profile: <span class="kw-2">&amp;</span>Profile) -&gt; Effects {

@@ -405,7 +405,9 @@
 <a href="#404" id="404">404</a>
 <a href="#405" id="405">405</a>
 <a href="#406" id="406">406</a>
-<a href="#407" id="407">407</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::ops::Range;
+<a href="#407" id="407">407</a>
+<a href="#408" id="408">408</a>
+<a href="#409" id="409">409</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::ops::Range;
 
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>url::Url;
@@ -433,7 +435,7 @@
         },
         profile::{AuthKey, Password, Settings <span class="kw">as </span>ProfileSettings},
         rating::Rating,
-        resource::{MetaItemId, MetaItemPreview, Video},
+        resource::{MetaItemId, MetaItemPreview, Stream, Video},
         streaming_server::{
             Settings <span class="kw">as </span>StreamingServerSettings,
             StatisticsRequest <span class="kw">as </span>StreamingServerStatisticsRequest,
@@ -585,6 +587,8 @@
     /// `time` is in milliseconds.
     </span><span class="attr">#[serde(rename_all = <span class="string">"camelCase"</span>)]
     </span>ExternalPlayerProgressChanged { time: u64 },
+    <span class="doccomment">/// Records the given [`Stream`] as the last used one after opening it in an external player.
+    </span>ExternalPlayerStreamOpened(Stream),
     <span class="doccomment">/// Rate the current meta item
     </span>Rate(<span class="prelude-ty">Option</span>&lt;Rating&gt;),
 }
