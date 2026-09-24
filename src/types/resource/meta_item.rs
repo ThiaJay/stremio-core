@@ -345,16 +345,14 @@ impl MetaItem {
     /// to the narrative sequence without changing their canonical identity. Invalid
     /// hints fail closed and callers should retain ordinary canonical presentation.
     pub fn story_order_videos(&self) -> Option<Vec<&Video>> {
-        if self.preview.r#type != "series"
-            || self.preview.behavior_hints.story_order_version != Some(1)
-            || self.preview.behavior_hints.story_order.is_empty()
-        {
+        if self.preview.r#type != "series" {
             return None;
         }
+        let story_order = self.preview.behavior_hints.story_order_v1()?;
 
         let mut seen = std::collections::HashSet::new();
-        let mut ordered = Vec::with_capacity(self.preview.behavior_hints.story_order.len());
-        for id in &self.preview.behavior_hints.story_order {
+        let mut ordered = Vec::with_capacity(story_order.len());
+        for id in &story_order {
             if id.is_empty() || !seen.insert(id.as_str()) {
                 return None;
             }
@@ -603,15 +601,6 @@ pub struct MetaItemBehaviorHints {
     pub featured_video_id: Option<String>,
     #[serde(default)]
     pub has_scheduled_videos: bool,
-    /// Optional stable-ID presentation order for narrative series playback.
-    ///
-    /// This never changes canonical season/episode coordinates and therefore must
-    /// never be used to construct or reinterpret the watched bitfield.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub story_order: Vec<String>,
-    /// Version of the stable-ID story-order contract. Version 1 is currently supported.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub story_order_version: Option<u32>,
     #[serde(flatten)]
     pub other: HashMap<String, serde_json::Value>,
 }
@@ -620,6 +609,30 @@ impl MetaItemBehaviorHints {
     /// `tv` is the legacy channel type, including addons predating `isLive`.
     pub fn is_live(&self, r#type: &str) -> bool {
         self.is_live || r#type == "tv"
+    }
+
+    /// Returns a version 1 stable-ID story-order hint from the existing flattened
+    /// behaviour-hint map. This preserves source compatibility for existing Core users.
+    pub fn story_order_v1(&self) -> Option<Vec<String>> {
+        if self
+            .other
+            .get("storyOrderVersion")
+            .and_then(serde_json::Value::as_u64)
+            != Some(1)
+        {
+            return None;
+        }
+
+        self.other
+            .get("storyOrder")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|values| {
+                values
+                    .iter()
+                    .map(|value| value.as_str().map(str::to_owned))
+                    .collect::<Option<Vec<_>>>()
+            })
+            .filter(|ids| !ids.is_empty())
     }
 }
 
@@ -643,12 +656,12 @@ mod tests {
             preview: MetaItemPreview {
                 r#type: "series".to_owned(),
                 behavior_hints: MetaItemBehaviorHints {
-                    story_order: vec![
-                        "s1e1".to_owned(),
-                        "special".to_owned(),
-                        "s1e2".to_owned(),
-                    ],
-                    story_order_version: Some(1),
+                    other: [
+                        ("storyOrder".to_owned(), serde_json::json!(["s1e1", "special", "s1e2"])),
+                        ("storyOrderVersion".to_owned(), serde_json::json!(1)),
+                    ]
+                    .into_iter()
+                    .collect(),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -720,12 +733,12 @@ mod tests {
             preview: MetaItemPreview {
                 r#type: "series".to_owned(),
                 behavior_hints: MetaItemBehaviorHints {
-                    story_order: vec![
-                        "s1e1".to_owned(),
-                        "special".to_owned(),
-                        "s1e2".to_owned(),
-                    ],
-                    story_order_version: Some(1),
+                    other: [
+                        ("storyOrder".to_owned(), serde_json::json!(["s1e1", "special", "s1e2"])),
+                        ("storyOrderVersion".to_owned(), serde_json::json!(1)),
+                    ]
+                    .into_iter()
+                    .collect(),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -755,8 +768,12 @@ mod tests {
             preview: MetaItemPreview {
                 r#type: "series".to_owned(),
                 behavior_hints: MetaItemBehaviorHints {
-                    story_order: story_order.into_iter().map(str::to_owned).collect(),
-                    story_order_version: Some(1),
+                    other: [
+                        ("storyOrder".to_owned(), serde_json::json!(story_order)),
+                        ("storyOrderVersion".to_owned(), serde_json::json!(1)),
+                    ]
+                    .into_iter()
+                    .collect(),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -774,7 +791,10 @@ mod tests {
             "every canonical non-special episode must remain represented");
 
         let mut unsupported = make(vec!["s1e1", "special", "s1e2"]);
-        unsupported.preview.behavior_hints.story_order_version = Some(2);
+        unsupported.preview.behavior_hints.other.insert(
+            "storyOrderVersion".to_owned(),
+            serde_json::json!(2),
+        );
         assert!(unsupported.story_order_videos().is_none());
     }
 
