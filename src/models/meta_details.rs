@@ -161,7 +161,7 @@ impl<E: Env + 'static> UpdateWithCtx<E> for MetaDetails {
                                 (Some(watched), Some(meta_item)) => {
                                     let videos = meta_item.released_story_videos(&E::now());
                                     let has_released_story = !videos.is_empty();
-                                    let watched = library_item.mark_videos_as_watched::<E>(
+                                    library_item.mark_videos_as_watched::<E>(
                                         watched,
                                         videos,
                                         *is_watched,
