@@ -143,19 +143,27 @@ pub fn update_library<E: Env + 'static>(
         },
         Msg::Action(Action::Ctx(ActionCtx::LibraryItemMarkAsWatched { id, is_watched })) => {
             match library.items.get(id) {
-                Some(library_item) => {
+                Some(library_item) if library_item.r#type != "series" => {
                     let mut library_item = library_item.to_owned();
                     library_item.mark_as_watched::<E>(*is_watched);
                     Effects::msg(Msg::Internal(Internal::UpdateLibraryItem(library_item)))
                         .unchanged()
                 }
-                _ => Effects::none().unchanged(),
+                // A series title cannot be safely marked from LibraryItem state alone because
+                // its canonical episode bitmap requires loaded metadata. Clients must use
+                // MetaDetails::MarkAsWatched after metadata is ready.
+                Some(_) | None => Effects::none().unchanged(),
             }
         }
         Msg::Action(Action::Ctx(ActionCtx::MetaItemMarkAsWatched {
             meta_item,
             is_watched,
         })) => {
+            // MetaItemPreview has no episode list, so a series mutation here cannot update the
+            // watched bitmap safely. Require the loaded MetaDetails path for series.
+            if meta_item.r#type == "series" {
+                return Effects::none().unchanged();
+            }
             let mut library_item = match library.items.get(&meta_item.id) {
                 Some(library_item) => library_item.to_owned(),
                 _ if *is_watched => LibraryItem::from((meta_item, PhantomData::<E>)),

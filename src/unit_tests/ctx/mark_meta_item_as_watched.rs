@@ -219,3 +219,73 @@ fn meta_item_unwatch_existing_item_resets() {
         "unwatch does not discard active playback progress"
     );
 }
+#[test]
+fn generic_meta_item_mark_as_watched_fails_closed_for_series_without_episode_metadata() {
+    let _env_mutex = TestEnv::reset().expect("Should have exclusive lock to TestEnv");
+    *NOW.write().unwrap() = Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap();
+    let mut series = meta_preview();
+    series.r#type = "series".to_owned();
+    series.name = "Test Series".to_owned();
+
+    let (runtime, _rx) = test_runtime(LibraryBucket::default());
+    TestEnv::run(|| {
+        runtime.dispatch(RuntimeAction {
+            field: None,
+            action: Action::Ctx(ActionCtx::MetaItemMarkAsWatched {
+                meta_item: series,
+                is_watched: true,
+            }),
+        })
+    });
+
+    assert!(
+        runtime.model().unwrap().ctx.library.items.is_empty(),
+        "preview-only series action must not create a title-level watched record without episode bits"
+    );
+}
+
+#[test]
+fn generic_library_item_mark_as_watched_fails_closed_for_series() {
+    let _env_mutex = TestEnv::reset().expect("Should have exclusive lock to TestEnv");
+    *NOW.write().unwrap() = Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap();
+    let existing = LibraryItem {
+        id: "ttseries".into(),
+        removed: false,
+        temp: false,
+        ctime: None,
+        mtime: Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap(),
+        state: LibraryItemState {
+            time_offset: 123_456,
+            duration: 3_600_000,
+            ..Default::default()
+        },
+        name: "Test Series".to_owned(),
+        r#type: "series".to_owned(),
+        poster: None,
+        poster_shape: Default::default(),
+        behavior_hints: Default::default(),
+    };
+    let (runtime, _rx) = test_runtime(LibraryBucket {
+        uid: None,
+        items: vec![("ttseries".into(), existing.clone())]
+            .into_iter()
+            .collect(),
+    });
+
+    TestEnv::run(|| {
+        runtime.dispatch(RuntimeAction {
+            field: None,
+            action: Action::Ctx(ActionCtx::LibraryItemMarkAsWatched {
+                id: "ttseries".into(),
+                is_watched: true,
+            }),
+        })
+    });
+
+    let model = runtime.model().unwrap();
+    assert_eq!(
+        model.ctx.library.items.get("ttseries").unwrap(),
+        &existing,
+        "series action without loaded episode metadata must be a no-op"
+    );
+}

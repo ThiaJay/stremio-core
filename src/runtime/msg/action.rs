@@ -50,12 +50,17 @@ pub enum ActionCtx {
     AddToLibrary(MetaItemPreview),
     RemoveFromLibrary(String),
     RewindLibraryItem(String),
+    /// Marks a non-series LibraryItem watched or unwatched.
+    ///
+    /// Series require loaded metadata so their episode watched bitmap can be changed
+    /// safely and therefore must use `ActionMetaDetails::MarkAsWatched`.
     LibraryItemMarkAsWatched {
         id: LibraryItemId,
         is_watched: bool,
     },
-    /// Marks a meta item as watched, creating a temporary LibraryItem if one doesn't exist.
-    /// Used for discover so we dont need to load metadetails model on each item preview focus
+    /// Marks a non-series meta item as watched, creating a temporary LibraryItem if one doesn't exist.
+    /// Series fail closed because MetaItemPreview does not contain the episode list needed to
+    /// update the canonical watched bitmap.
     MetaItemMarkAsWatched {
         meta_item: MetaItemPreview,
         is_watched: bool,
