@@ -329,6 +329,58 @@ impl MetaItem {
         })
     }
 
+    /// Returns a validated narrative presentation order based only on stable video IDs.
+    ///
+    /// The hint is accepted only for series, version 1, with unique known IDs and with
+    /// every canonical non-special episode represented. Season 0 entries may be added
+    /// to the narrative sequence without changing their canonical identity. Invalid
+    /// hints fail closed and callers should retain ordinary canonical presentation.
+    pub fn story_order_videos(&self) -> Option<Vec<&Video>> {
+        if self.preview.r#type != "series"
+            || self.preview.behavior_hints.story_order_version != Some(1)
+            || self.preview.behavior_hints.story_order.is_empty()
+        {
+            return None;
+        }
+
+        let mut seen = std::collections::HashSet::new();
+        let mut ordered = Vec::with_capacity(self.preview.behavior_hints.story_order.len());
+        for id in &self.preview.behavior_hints.story_order {
+            if id.is_empty() || !seen.insert(id.as_str()) {
+                return None;
+            }
+            let video = self.videos.iter().find(|video| &video.id == id)?;
+            ordered.push(video);
+        }
+
+        if self
+            .videos_iter()
+            .any(|video| !seen.contains(video.id.as_str()))
+        {
+            return None;
+        }
+
+        Some(ordered)
+    }
+
+    /// Returns the next released video in the validated narrative presentation order.
+    ///
+    /// Unlike `next_video`, this may progress through a canonical Season 0 narrative
+    /// special when the metadata source has explicitly listed its stable ID in
+    /// `storyOrder`. Invalid or absent story-order hints return `None`.
+    pub fn next_story_video(&self, video_id: &str, now: &DateTime<Utc>) -> Option<&Video> {
+        if self.is_live() {
+            return None;
+        }
+        let ordered = self.story_order_videos()?;
+        let position = ordered.iter().position(|video| video.id == video_id)?;
+        ordered.get(position + 1).copied().filter(|next| {
+            next.released
+                .as_ref()
+                .is_none_or(|released| released <= now)
+        })
+    }
+
     /// Returns currently released, non-special series videos that are safe to include
     /// in a title-level watched/unwatched mutation.
     ///
@@ -530,6 +582,15 @@ pub struct MetaItemBehaviorHints {
     pub featured_video_id: Option<String>,
     #[serde(default)]
     pub has_scheduled_videos: bool,
+    /// Optional stable-ID presentation order for narrative series playback.
+    ///
+    /// This never changes canonical season/episode coordinates and therefore must
+    /// never be used to construct or reinterpret the watched bitfield.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub story_order: Vec<String>,
+    /// Version of the stable-ID story-order contract. Version 1 is currently supported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub story_order_version: Option<u32>,
     #[serde(flatten)]
     pub other: HashMap<String, serde_json::Value>,
 }
@@ -553,6 +614,100 @@ mod tests {
             series_info: Some(SeriesInfo { season, episode }),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn stable_story_order_inserts_special_without_changing_canonical_coordinates() {
+        let mut meta_item = MetaItem {
+            preview: MetaItemPreview {
+                r#type: "series".to_owned(),
+                behavior_hints: MetaItemBehaviorHints {
+                    story_order: vec![
+                        "s1e1".to_owned(),
+                        "special".to_owned(),
+                        "s1e2".to_owned(),
+                    ],
+                    story_order_version: Some(1),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            videos: vec![
+                create_video("s1e1", 1, 1),
+                create_video("s1e2", 1, 2),
+                create_video("special", 0, 1),
+            ],
+        };
+
+        let before = meta_item
+            .videos
+            .iter()
+            .map(|video| {
+                let info = video.series_info.as_ref().unwrap();
+                (video.id.to_owned(), info.season, info.episode)
+            })
+            .collect::<Vec<_>>();
+        let story = meta_item
+            .story_order_videos()
+            .unwrap()
+            .iter()
+            .map(|video| video.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(story, vec!["s1e1", "special", "s1e2"]);
+
+        let after = meta_item
+            .videos
+            .iter()
+            .map(|video| {
+                let info = video.series_info.as_ref().unwrap();
+                (video.id.to_owned(), info.season, info.episode)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(after, before, "presentation order must not rewrite canonical coordinates");
+
+        let now = Utc::now();
+        meta_item.videos.iter_mut().for_each(|video| video.released = Some(now));
+        assert_eq!(
+            meta_item
+                .next_story_video("s1e1", &now)
+                .map(|video| video.id.as_str()),
+            Some("special")
+        );
+        assert_eq!(
+            meta_item
+                .next_story_video("special", &now)
+                .map(|video| video.id.as_str()),
+            Some("s1e2")
+        );
+    }
+
+    #[test]
+    fn invalid_story_order_fails_closed() {
+        let make = |story_order: Vec<&str>| MetaItem {
+            preview: MetaItemPreview {
+                r#type: "series".to_owned(),
+                behavior_hints: MetaItemBehaviorHints {
+                    story_order: story_order.into_iter().map(str::to_owned).collect(),
+                    story_order_version: Some(1),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            videos: vec![
+                create_video("s1e1", 1, 1),
+                create_video("s1e2", 1, 2),
+                create_video("special", 0, 1),
+            ],
+        };
+
+        assert!(make(vec!["s1e1", "s1e1", "s1e2"]).story_order_videos().is_none());
+        assert!(make(vec!["s1e1", "missing", "s1e2"]).story_order_videos().is_none());
+        assert!(make(vec!["s1e1", "special"]).story_order_videos().is_none(),
+            "every canonical non-special episode must remain represented");
+
+        let mut unsupported = make(vec!["s1e1", "special", "s1e2"]);
+        unsupported.preview.behavior_hints.story_order_version = Some(2);
+        assert!(unsupported.story_order_videos().is_none());
     }
 
     #[test]
