@@ -657,7 +657,10 @@ mod tests {
                 r#type: "series".to_owned(),
                 behavior_hints: MetaItemBehaviorHints {
                     other: [
-                        ("storyOrder".to_owned(), serde_json::json!(["s1e1", "special", "s1e2"])),
+                        (
+                            "storyOrder".to_owned(),
+                            serde_json::json!(["s1e1", "special", "s1e2"]),
+                        ),
                         ("storyOrderVersion".to_owned(), serde_json::json!(1)),
                     ]
                     .into_iter()
@@ -697,10 +700,16 @@ mod tests {
                 (video.id.to_owned(), info.season, info.episode)
             })
             .collect::<Vec<_>>();
-        assert_eq!(after, before, "presentation order must not rewrite canonical coordinates");
+        assert_eq!(
+            after, before,
+            "presentation order must not rewrite canonical coordinates"
+        );
 
         let now = Utc::now();
-        meta_item.videos.iter_mut().for_each(|video| video.released = Some(now));
+        meta_item
+            .videos
+            .iter_mut()
+            .for_each(|video| video.released = Some(now));
         assert_eq!(
             meta_item
                 .next_story_video("s1e1", &now)
@@ -734,7 +743,10 @@ mod tests {
                 r#type: "series".to_owned(),
                 behavior_hints: MetaItemBehaviorHints {
                     other: [
-                        ("storyOrder".to_owned(), serde_json::json!(["s1e1", "special", "s1e2"])),
+                        (
+                            "storyOrder".to_owned(),
+                            serde_json::json!(["s1e1", "special", "s1e2"]),
+                        ),
                         ("storyOrderVersion".to_owned(), serde_json::json!(1)),
                     ]
                     .into_iter()
@@ -785,16 +797,23 @@ mod tests {
             ],
         };
 
-        assert!(make(vec!["s1e1", "s1e1", "s1e2"]).story_order_videos().is_none());
-        assert!(make(vec!["s1e1", "missing", "s1e2"]).story_order_videos().is_none());
-        assert!(make(vec!["s1e1", "special"]).story_order_videos().is_none(),
-            "every canonical non-special episode must remain represented");
+        assert!(make(vec!["s1e1", "s1e1", "s1e2"])
+            .story_order_videos()
+            .is_none());
+        assert!(make(vec!["s1e1", "missing", "s1e2"])
+            .story_order_videos()
+            .is_none());
+        assert!(
+            make(vec!["s1e1", "special"]).story_order_videos().is_none(),
+            "every canonical non-special episode must remain represented"
+        );
 
         let mut unsupported = make(vec!["s1e1", "special", "s1e2"]);
-        unsupported.preview.behavior_hints.other.insert(
-            "storyOrderVersion".to_owned(),
-            serde_json::json!(2),
-        );
+        unsupported
+            .preview
+            .behavior_hints
+            .other
+            .insert("storyOrderVersion".to_owned(), serde_json::json!(2));
         assert!(unsupported.story_order_videos().is_none());
     }
 

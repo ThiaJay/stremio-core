@@ -220,7 +220,6 @@ fn meta_item_unwatch_existing_item_resets() {
     );
 }
 
-
 #[test]
 fn generic_meta_item_mark_as_watched_fails_closed_for_series_without_episode_metadata() {
     let _env_mutex = TestEnv::reset().expect("Should have exclusive lock to TestEnv");
@@ -269,7 +268,9 @@ fn generic_library_item_mark_as_watched_fails_closed_for_series() {
     };
     let (runtime, _rx) = test_runtime(LibraryBucket {
         uid: None,
-        items: vec![("ttseries".into(), existing.clone())].into_iter().collect(),
+        items: vec![("ttseries".into(), existing.clone())]
+            .into_iter()
+            .collect(),
     });
 
     TestEnv::run(|| {
