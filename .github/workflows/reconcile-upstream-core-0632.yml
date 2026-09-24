@@ -1,0 +1,110 @@
+name: Reconcile upstream Core 0.63.2
+
+on:
+  push:
+    branches:
+      - automation/reconcile-core-0632-20260924
+
+permissions:
+  contents: write
+
+concurrency:
+  group: reconcile-upstream-core-0632-20260924
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    env:
+      BASE_SHA: 148ab4973c999638f71d70c55da8c7b275d23bdf
+      UPSTREAM_SHA: 88be65ba6d815dd13e9b902c771699a930ffd6b4
+      TARGET_BRANCH: reconcile/upstream-core-0632-20260924
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Rust setup
+        uses: dtolnay/rust-toolchain@1.85
+        with:
+          components: rustfmt, clippy
+
+      - name: Reconcile exact upstream head without overwriting fork work
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git fetch origin "refs/heads/${TARGET_BRANCH}:refs/remotes/origin/${TARGET_BRANCH}"
+          git checkout -B "${TARGET_BRANCH}" "origin/${TARGET_BRANCH}"
+          test "$(git rev-parse HEAD)" = "${BASE_SHA}"
+          git fetch --no-tags https://github.com/Stremio/stremio-core.git "${UPSTREAM_SHA}"
+          test "$(git rev-parse FETCH_HEAD)" = "${UPSTREAM_SHA}"
+          git merge --no-ff --no-commit -X ours FETCH_HEAD
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          action = Path('src/runtime/msg/action.rs')
+          text = action.read_text()
+          old_import = 'resource::{MetaItemId, MetaItemPreview, Video}'
+          new_import = 'resource::{MetaItemId, MetaItemPreview, Stream, Video}'
+          if new_import not in text:
+              if old_import not in text:
+                  raise SystemExit('Cannot locate resource import anchor')
+              text = text.replace(old_import, new_import, 1)
+          variant = '    ExternalPlayerStreamOpened(Stream),\n'
+          if variant not in text:
+              anchor = '    ExternalPlayerProgressChanged { time: u64 },\n'
+              if anchor not in text:
+                  raise SystemExit('Cannot locate external progress action anchor')
+              text = text.replace(
+                  anchor,
+                  anchor + '    /// Records the given [`Stream`] as the last used one after opening it in an external player.\n' + variant,
+                  1,
+              )
+          action.write_text(text)
+
+          meta = Path('src/models/meta_details.rs')
+          text = meta.read_text()
+          action_arm = '''            Msg::Action(Action::MetaDetails(ActionMetaDetails::ExternalPlayerStreamOpened(\n                stream,\n            ))) => external_player_stream_opened(\n                stream,\n                &self.meta_items,\n                &self.meta_streams,\n                &self.streams,\n            ),\n'''
+          if 'ActionMetaDetails::ExternalPlayerStreamOpened' not in text:
+              anchor = '''            Msg::Action(Action::MetaDetails(\n                ActionMetaDetails::ExternalPlayerProgressChanged { time },\n            )) => external_player_progress_update::<E>(\n                &self.selected,\n                &self.meta_items,\n                &self.library_item,\n                &self.watched,\n                *time,\n            ),\n'''
+              if anchor not in text:
+                  raise SystemExit('Cannot locate external progress match arm')
+              text = text.replace(anchor, anchor + action_arm, 1)
+
+          helper = '''fn external_player_stream_opened(\n    stream: &Stream,\n    meta_items: &[ResourceLoadable<MetaItem>],\n    meta_streams: &[ResourceLoadable<Vec<Stream>>],\n    streams: &[ResourceLoadable<Vec<Stream>>],\n) -> Effects {\n    let meta_item = meta_items\n        .iter()\n        .find(|meta_item| matches!(meta_item.content, Some(Loadable::Ready(_))));\n    let stream_request = meta_streams\n        .iter()\n        .chain(streams)\n        .find(|resource| match &resource.content {\n            Some(Loadable::Ready(streams)) => streams.contains(stream),\n            _ => false,\n        })\n        .map(|resource| resource.request.to_owned());\n    match (meta_item, stream_request) {\n        (Some(meta_item), Some(stream_request)) => {\n            Effects::msg(Msg::Internal(Internal::StreamLoaded {\n                stream: stream.to_owned(),\n                stream_request: Some(stream_request),\n                meta_item: meta_item.to_owned(),\n            }))\n            .unchanged()\n        }\n        _ => Effects::none().unchanged(),\n    }\n}\n\n'''
+          if 'fn external_player_stream_opened(' not in text:
+              anchor = 'fn library_item_sync(library_item: &Option<LibraryItem>, profile: &Profile) -> Effects {'
+              if anchor not in text:
+                  raise SystemExit('Cannot locate library_item_sync anchor')
+              text = text.replace(anchor, helper + anchor, 1)
+          meta.write_text(text)
+          PY
+
+          cargo fmt --all
+          git diff --check
+          grep -q 'ExternalPlayerStreamOpened(Stream)' src/runtime/msg/action.rs
+          grep -q 'fn external_player_stream_opened' src/models/meta_details.rs
+          grep -q 'meta_details.library_item.as_ref()' stremio-core-web/src/model/serialize_meta_details.rs
+          grep -q '"version": "0.63.2"' stremio-core-web/package.json
+          git add -A
+          git commit -m "Merge upstream Stremio Core 0.63.2"
+          git merge-base --is-ancestor "${BASE_SHA}" HEAD
+          git merge-base --is-ancestor "${UPSTREAM_SHA}" HEAD
+
+      - name: Native exact tree gates
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check
+          cargo clippy --all --no-deps -- -D warnings
+          cargo test
+          cargo build
+
+      - name: Push reconciled candidate without force
+        shell: bash
+        run: |
+          set -euo pipefail
+          git push origin "HEAD:refs/heads/${TARGET_BRANCH}"
