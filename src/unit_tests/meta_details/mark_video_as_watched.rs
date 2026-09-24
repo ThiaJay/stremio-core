@@ -254,6 +254,130 @@ fn mark_title_as_watched_marks_only_released_story_episodes_and_clears_progress(
 }
 
 #[test]
+fn mark_title_as_watched_clears_stale_resume_when_pointer_is_ancillary_special() {
+    let _env_mutex = TestEnv::reset().expect("Should have exclusive lock to TestEnv");
+    let now = Utc::now();
+    *FETCH_HANDLER.write().unwrap() = Box::new(move |request: Request| match request {
+        Request { url, .. } if url == "https://v3-cinemeta.strem.io/meta/series/tt123456.json" => {
+            future::ok(Box::new(ResourceResponse::Meta {
+                meta: MetaItem {
+                    preview: MetaItemPreview {
+                        id: "tt123456".to_owned(),
+                        r#type: "series".to_owned(),
+                        ..Default::default()
+                    },
+                    videos: vec![
+                        create_released_video(1, 1, now - Duration::days(2)),
+                        create_released_video(1, 2, now - Duration::days(1)),
+                        create_released_video(0, 1, now - Duration::days(3)),
+                    ],
+                },
+            }) as Box<dyn Any + Send>)
+            .boxed_env()
+        }
+        _ => default_fetch_handler(request),
+    });
+
+    run_with_library_item(create_library_item("tt123456:0:1"), |runtime| {
+        load_selected_video(&runtime, "tt123456:0:1");
+
+        TestEnv::run(|| {
+            runtime.dispatch(RuntimeAction {
+                field: None,
+                action: Action::MetaDetails(ActionMetaDetails::MarkAsWatched(true)),
+            });
+        });
+
+        let model = runtime.model().unwrap();
+        let library_item = model.ctx.library.items.get("tt123456").unwrap();
+        let videos = vec![
+            create_released_video(1, 1, now - Duration::days(2)),
+            create_released_video(1, 2, now - Duration::days(1)),
+            create_released_video(0, 1, now - Duration::days(3)),
+        ];
+        let watched = library_item.state.watched_bitfield(&videos);
+
+        assert!(watched.get_video("tt123456:1:1"));
+        assert!(watched.get_video("tt123456:1:2"));
+        assert!(
+            !watched.get_video("tt123456:0:1"),
+            "ancillary Season 0 pointer must remain outside released story membership"
+        );
+        assert_eq!(
+            library_item.state.time_offset, 0,
+            "explicit title watched must clear an obsolete ancillary resume pointer"
+        );
+        assert_eq!(
+            library_item.state.video_id.as_deref(),
+            Some("tt123456:0:1"),
+            "resume cleanup must preserve the historical video identity"
+        );
+    });
+}
+
+#[test]
+fn mark_title_as_watched_clears_stale_resume_when_pointer_is_future_episode() {
+    let _env_mutex = TestEnv::reset().expect("Should have exclusive lock to TestEnv");
+    let now = Utc::now();
+    *FETCH_HANDLER.write().unwrap() = Box::new(move |request: Request| match request {
+        Request { url, .. } if url == "https://v3-cinemeta.strem.io/meta/series/tt123456.json" => {
+            future::ok(Box::new(ResourceResponse::Meta {
+                meta: MetaItem {
+                    preview: MetaItemPreview {
+                        id: "tt123456".to_owned(),
+                        r#type: "series".to_owned(),
+                        ..Default::default()
+                    },
+                    videos: vec![
+                        create_released_video(1, 1, now - Duration::days(2)),
+                        create_released_video(1, 2, now - Duration::days(1)),
+                        create_released_video(1, 3, now + Duration::days(1)),
+                    ],
+                },
+            }) as Box<dyn Any + Send>)
+            .boxed_env()
+        }
+        _ => default_fetch_handler(request),
+    });
+
+    run_with_library_item(create_library_item("tt123456:1:3"), |runtime| {
+        load_selected_video(&runtime, "tt123456:1:3");
+
+        TestEnv::run(|| {
+            runtime.dispatch(RuntimeAction {
+                field: None,
+                action: Action::MetaDetails(ActionMetaDetails::MarkAsWatched(true)),
+            });
+        });
+
+        let model = runtime.model().unwrap();
+        let library_item = model.ctx.library.items.get("tt123456").unwrap();
+        let videos = vec![
+            create_released_video(1, 1, now - Duration::days(2)),
+            create_released_video(1, 2, now - Duration::days(1)),
+            create_released_video(1, 3, now + Duration::days(1)),
+        ];
+        let watched = library_item.state.watched_bitfield(&videos);
+
+        assert!(watched.get_video("tt123456:1:1"));
+        assert!(watched.get_video("tt123456:1:2"));
+        assert!(
+            !watched.get_video("tt123456:1:3"),
+            "future episode must remain unwatched"
+        );
+        assert_eq!(
+            library_item.state.time_offset, 0,
+            "future episode must not keep an explicitly completed released story in Continue Watching"
+        );
+        assert_eq!(
+            library_item.state.video_id.as_deref(),
+            Some("tt123456:1:3"),
+            "resume cleanup must not rewrite the historical pointer"
+        );
+    });
+}
+
+#[test]
 fn mark_title_as_unwatched_does_not_invent_or_clear_resume_progress() {
     let _env_mutex = TestEnv::reset().expect("Should have exclusive lock to TestEnv");
     let now = Utc::now();
