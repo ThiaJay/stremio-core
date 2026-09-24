@@ -300,12 +300,21 @@ impl MetaItem {
         (current, next)
     }
 
-    /// Returns the next released episode without crossing into season 0 specials.
-    /// Broadcasts do not advance channel playback at programme boundaries.
+    /// Returns the next released narrative episode.
+    ///
+    /// When a validated version 1 stable-ID Story Order is present, that presentation
+    /// sequence is authoritative for progression while canonical episode coordinates
+    /// and watched-bitfield identity remain unchanged. Without a valid Story Order,
+    /// the legacy canonical sequence remains in force and does not cross into Season 0.
     pub fn next_video(&self, video_id: &str, now: &DateTime<Utc>) -> Option<&Video> {
         if self.is_live() {
             return None;
         }
+
+        if self.story_order_videos().is_some() {
+            return self.next_story_video(video_id, now);
+        }
+
         let (position, current) = self
             .videos
             .iter()
@@ -377,7 +386,7 @@ impl MetaItem {
         ordered.get(position + 1).copied().filter(|next| {
             next.released
                 .as_ref()
-                .is_none_or(|released| released <= now)
+                .map_or(true, |released| released <= now)
         })
     }
 
@@ -387,6 +396,18 @@ impl MetaItem {
     /// A missing release date is not treated as proof that an episode has aired. This
     /// deliberately fails closed for TBC/future episodes.
     pub fn released_story_videos(&self, now: &DateTime<Utc>) -> Vec<&Video> {
+        if let Some(story_order) = self.story_order_videos() {
+            return story_order
+                .into_iter()
+                .filter(|video| {
+                    video
+                        .released
+                        .as_ref()
+                        .is_some_and(|released| released <= now)
+                })
+                .collect_vec();
+        }
+
         self.videos_iter()
             .filter(|video| {
                 video
@@ -678,6 +699,53 @@ mod tests {
                 .next_story_video("special", &now)
                 .map(|video| video.id.as_str()),
             Some("s1e2")
+        );
+    }
+
+    #[test]
+    fn released_story_videos_uses_validated_story_membership() {
+        let now = Utc::now();
+        let released = now - Duration::days(1);
+        let future = now + Duration::days(1);
+        let mut regular_one = create_video("s1e1", 1, 1);
+        regular_one.released = Some(released);
+        let mut regular_two = create_video("s1e2", 1, 2);
+        regular_two.released = Some(future);
+        let mut narrative_special = create_video("special", 0, 1);
+        narrative_special.released = Some(released);
+        let mut ancillary_special = create_video("ancillary", 0, 2);
+        ancillary_special.released = Some(released);
+
+        let meta_item = MetaItem {
+            preview: MetaItemPreview {
+                r#type: "series".to_owned(),
+                behavior_hints: MetaItemBehaviorHints {
+                    story_order: vec![
+                        "s1e1".to_owned(),
+                        "special".to_owned(),
+                        "s1e2".to_owned(),
+                    ],
+                    story_order_version: Some(1),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            videos: vec![
+                regular_one,
+                regular_two,
+                narrative_special,
+                ancillary_special,
+            ],
+        };
+
+        assert_eq!(
+            meta_item
+                .released_story_videos(&now)
+                .iter()
+                .map(|video| video.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["s1e1", "special"],
+            "title-level watched actions should include released narrative specials, exclude future episodes and ignore ancillary Season 0 material"
         );
     }
 
