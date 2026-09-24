@@ -1,0 +1,107 @@
+name: Validate reconciled Core 0.63.2 exact head
+
+on:
+  push:
+    branches:
+      - automation/reconcile-core-0632-20260924
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-reconciled-core-0632-20260924
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    env:
+      CANDIDATE_SHA: 2e402f435c8805152fd3ac14a6d0e07fe16ad4a9
+      UPSTREAM_SHA: 88be65ba6d815dd13e9b902c771699a930ffd6b4
+      BASE_SHA: 148ab4973c999638f71d70c55da8c7b275d23bdf
+      WASM_PACK_VERSION: 0.14.0
+      WASM_RUST_VERSION: '1.95'
+      NODE_VERSION: 12
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          fetch-depth: 0
+
+      - name: Verify exact source ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${CANDIDATE_SHA}"
+          git merge-base --is-ancestor "${BASE_SHA}" HEAD
+          git merge-base --is-ancestor "${UPSTREAM_SHA}" HEAD
+          test "$(git rev-list --parents -n 1 HEAD | cut -d' ' -f2)" = "${BASE_SHA}"
+          test "$(git rev-list --parents -n 1 HEAD | cut -d' ' -f3)" = "${UPSTREAM_SHA}"
+          test "$(git diff --name-only "${BASE_SHA}"..HEAD | sort | wc -l)" -eq 11
+          grep -q 'ExternalPlayerStreamOpened(Stream)' src/runtime/msg/action.rs
+          grep -q 'fn external_player_stream_opened' src/models/meta_details.rs
+          grep -q 'meta_details.library_item.as_ref()' stremio-core-web/src/model/serialize_meta_details.rs
+          grep -q '"version": "0.63.2"' stremio-core-web/package.json
+
+      - name: Rust setup for native gates
+        uses: dtolnay/rust-toolchain@1.85
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Native gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check
+          cargo clippy --all --no-deps -- -D warnings
+          cargo test
+          cargo build
+
+      - name: Rust setup for WebAssembly
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.WASM_RUST_VERSION }}
+          components: rust-std
+          targets: wasm32-unknown-unknown
+
+      - uses: taiki-e/install-action@v2.87.15
+        with:
+          tool: wasm-pack@${{ env.WASM_PACK_VERSION }}
+
+      - name: Setup chromedriver
+        uses: nanasess/setup-chromedriver@v3
+
+      - name: WebAssembly browser tests
+        working-directory: stremio-core-web
+        run: wasm-pack test --chromedriver "$(which chromedriver)" --chrome --headless
+
+      - name: Setup NodeJS
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: stremio-core-web/package-lock.json
+
+      - name: Package gates and digest receipt
+        working-directory: stremio-core-web
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          npm pack
+          package=$(printf '%s\n' ./*.tgz)
+          echo "candidate_sha=${CANDIDATE_SHA}"
+          echo "release_sha1=$(sha1sum "$package" | awk '{print $1}')"
+          echo "release_sha256=$(sha256sum "$package" | awk '{print $1}')"
+          echo "release_integrity=sha512-$(openssl dgst -sha512 -binary "$package" | base64 -w 0)"
+          rm "$package"
+          npm run build-dev
+          npm pack
+          package=$(printf '%s\n' ./*.tgz)
+          echo "dev_sha1=$(sha1sum "$package" | awk '{print $1}')"
+          echo "dev_sha256=$(sha256sum "$package" | awk '{print $1}')"
+          echo "dev_integrity=sha512-$(openssl dgst -sha512 -binary "$package" | base64 -w 0)"
