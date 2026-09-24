@@ -219,7 +219,6 @@ fn meta_item_unwatch_existing_item_resets() {
         "unwatch does not discard active playback progress"
     );
 }
-
 #[test]
 fn generic_meta_item_mark_as_watched_fails_closed_for_series_without_episode_metadata() {
     let _env_mutex = TestEnv::reset().expect("Should have exclusive lock to TestEnv");
