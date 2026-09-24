@@ -160,6 +160,7 @@ impl<E: Env + 'static> UpdateWithCtx<E> for MetaDetails {
                             match (watched, meta_item) {
                                 (Some(watched), Some(meta_item)) => {
                                     let videos = meta_item.released_story_videos(&E::now());
+                                    let has_released_story = !videos.is_empty();
                                     let watched = library_item.mark_videos_as_watched::<E>(
                                         watched,
                                         videos,
@@ -167,15 +168,13 @@ impl<E: Env + 'static> UpdateWithCtx<E> for MetaDetails {
                                     );
 
                                     if *is_watched {
-                                        if library_item
-                                            .state
-                                            .video_id
-                                            .as_ref()
-                                            .is_some_and(|video_id| watched.get_video(video_id))
-                                        {
-                                            // Title-level completion means there is no released
-                                            // story episode left to resume. Preserve video_id as
-                                            // history, but remove stale Continue Watching progress.
+                                        if has_released_story {
+                                            // An explicit title-level watched action declares the
+                                            // currently released story complete. Any existing
+                                            // resume pointer is therefore obsolete even when it
+                                            // points at ancillary Season 0 material or an
+                                            // unreleased episode. Preserve video_id as history,
+                                            // but remove the stale Continue Watching progress.
                                             library_item.state.time_offset = 0;
                                         }
                                         library_item.state.times_watched =
