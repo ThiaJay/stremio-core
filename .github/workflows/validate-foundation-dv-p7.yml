@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - 'validation/foundation-dv-p7-*'
+  pull_request:
+    branches:
+      - development
   workflow_dispatch:
 
 permissions:
