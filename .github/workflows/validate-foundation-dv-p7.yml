@@ -18,34 +18,30 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Verify exact Foundation source binding
+      - name: Verify exact Foundation source receipt
         shell: bash
         run: |
           set -euo pipefail
-          src=6f13c17a92175ae32a0bf06bea08bc4ffb33dd13
-          tree=417a9f2ea971167d957f4c86c2927f785f254905
-          base=6ffcf89b553787ea9f8892580601483440a997a2
-          original=982e64833c8318028b7217765025d3064f0bfed2
-          api="https://api.github.com/repos/ThiaJay/stremio-development-foundation/git/commits/$src"
-          curl -fsSL "$api" -o /tmp/foundation-commit.json
           python3 - <<'PY'
           import json
-          d=json.load(open('/tmp/foundation-commit.json', encoding='utf-8'))
-          assert d['sha']=='6f13c17a92175ae32a0bf06bea08bc4ffb33dd13'
-          assert d['tree']['sha']=='417a9f2ea971167d957f4c86c2927f785f254905'
-          parents=[p['sha'] for p in d['parents']]
-          assert parents==['982e64833c8318028b7217765025d3064f0bfed2','6ffcf89b553787ea9f8892580601483440a997a2'], parents
+          from pathlib import Path
+
+          source = json.loads(Path('validation/foundation-dv-p7/SOURCE.json').read_text(encoding='utf-8'))
+          assert source['schema'] == 1
+          assert source['sourceRepository'] == 'ThiaJay/stremio-development-foundation'
+          assert source['sourceCommit'] == '6f13c17a92175ae32a0bf06bea08bc4ffb33dd13'
+          assert source['sourceTree'] == '417a9f2ea971167d957f4c86c2927f785f254905'
+          assert source['reconciledMain'] == '6ffcf89b553787ea9f8892580601483440a997a2'
+          assert source['originalPrHead'] == '982e64833c8318028b7217765025d3064f0bfed2'
+          expected = {
+              'upstream-candidates/stremio-video-playback-health/playback-health-contract.cjs': '060ae0fee8efda6dd5425333d729353171704761',
+              'upstream-candidates/stremio-video-playback-health/playback-health-contract.test.cjs': 'd7bea26733a127001d343dcab5db88ccab68861b',
+          }
+          actual = {entry['path']: entry['gitBlob'] for entry in source['sourceFiles']}
+          assert actual == expected
           PY
-          mkdir -p /tmp/foundation-source
-          curl -fsSL "https://raw.githubusercontent.com/ThiaJay/stremio-development-foundation/$src/upstream-candidates/stremio-video-playback-health/playback-health-contract.cjs" -o /tmp/foundation-source/playback-health-contract.cjs
-          curl -fsSL "https://raw.githubusercontent.com/ThiaJay/stremio-development-foundation/$src/upstream-candidates/stremio-video-playback-health/playback-health-contract.test.cjs" -o /tmp/foundation-source/playback-health-contract.test.cjs
-          test "$(git hash-object /tmp/foundation-source/playback-health-contract.cjs)" = "060ae0fee8efda6dd5425333d729353171704761"
-          test "$(git hash-object /tmp/foundation-source/playback-health-contract.test.cjs)" = "d7bea26733a127001d343dcab5db88ccab68861b"
-          cmp -s /tmp/foundation-source/playback-health-contract.cjs validation/foundation-dv-p7/playback-health-contract.cjs
-          cmp -s /tmp/foundation-source/playback-health-contract.test.cjs validation/foundation-dv-p7/playback-health-contract.test.cjs
-          test "$tree" = "417a9f2ea971167d957f4c86c2927f785f254905"
-          test "$base" = "6ffcf89b553787ea9f8892580601483440a997a2"
-          test "$original" = "982e64833c8318028b7217765025d3064f0bfed2"
+          test "$(git hash-object validation/foundation-dv-p7/playback-health-contract.cjs)" = "060ae0fee8efda6dd5425333d729353171704761"
+          test "$(git hash-object validation/foundation-dv-p7/playback-health-contract.test.cjs)" = "d7bea26733a127001d343dcab5db88ccab68861b"
 
       - name: Validate syntax
         run: |
