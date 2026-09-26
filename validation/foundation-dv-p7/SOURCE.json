@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "sourceRepository": "ThiaJay/stremio-development-foundation",
+  "sourceCommit": "6f13c17a92175ae32a0bf06bea08bc4ffb33dd13",
+  "sourceTree": "417a9f2ea971167d957f4c86c2927f785f254905",
+  "reconciledMain": "6ffcf89b553787ea9f8892580601483440a997a2",
+  "originalPrHead": "982e64833c8318028b7217765025d3064f0bfed2",
+  "sourceFiles": [
+    {
+      "path": "upstream-candidates/stremio-video-playback-health/playback-health-contract.cjs",
+      "gitBlob": "060ae0fee8efda6dd5425333d729353171704761"
+    },
+    {
+      "path": "upstream-candidates/stremio-video-playback-health/playback-health-contract.test.cjs",
+      "gitBlob": "d7bea26733a127001d343dcab5db88ccab68861b"
+    }
+  ],
+  "purpose": "Exact reconciled-tree redundant validation of Foundation PR 34 Dolby Vision Profile 7 playback health contract"
+}
