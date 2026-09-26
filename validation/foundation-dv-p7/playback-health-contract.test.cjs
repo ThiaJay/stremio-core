@@ -253,6 +253,7 @@ test('Profile 8 does not enter the Profile 7 conversion path', () => {
     }), 'switchStream');
 });
 
+
 test('Profile 7 recovery waits for the bounded startup timeout even when transient is false', () => {
     assert.equal(selectPlaybackRecovery({
         engine: 'ExoPlayer',
@@ -301,6 +302,7 @@ test('Profile 7 recovery budget advances from conversion to HDR10 and never loop
         canSwitchStream: true,
     }), 'switchStream');
 });
+
 
 test('a recovered Profile 7 presentation can become healthy after the startup timeout has fired', () => {
     const observation = {
