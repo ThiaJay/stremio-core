@@ -1,3 +1,4 @@
+mod addon_events;
 mod audio_preference;
 mod av_sync;
 mod mark_video_as_watched;

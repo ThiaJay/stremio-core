@@ -191,4 +191,5 @@ pub enum Internal {
     /// Mark Season as watched (meta item)
     /// Mark move as watched (meta item)
     WatchedSendResult(MetaItemId, Result<RatingSendResponse, EnvError>),
+    AddonEventResult(ResourceRequest, Box<Result<ResourceResponse, EnvError>>),
 }

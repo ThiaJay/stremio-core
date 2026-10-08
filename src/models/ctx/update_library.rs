@@ -10,7 +10,12 @@ use crate::{
         LIBRARY_COLLECTION_NAME, LIBRARY_RECENT_COUNT, LIBRARY_RECENT_STORAGE_KEY,
         LIBRARY_STORAGE_KEY,
     },
-    models::ctx::{CtxError, CtxStatus, OtherError},
+    models::{
+        common::{
+            addon_events_effects, item_watched_event_path, library_event_path, LibraryEventAction,
+        },
+        ctx::{CtxError, CtxStatus, OtherError},
+    },
     runtime::{
         msg::{Action, ActionCtx, CtxAuthResponse, Event, Internal, Msg},
         Effect, EffectFuture, Effects, Env, EnvFutureExt,
@@ -43,7 +48,20 @@ pub fn update_library<E: Env + 'static>(
             }
         }
         Msg::Action(Action::Ctx(ActionCtx::AddToLibrary(meta_preview))) => {
-            let mut library_item = match library.items.get(&meta_preview.id) {
+            let prev_library_item = library.items.get(&meta_preview.id);
+            let addon_events = match prev_library_item {
+                Some(library_item) if !library_item.removed => Effects::none().unchanged(),
+                _ => addon_events_effects::<E>(
+                    &profile.addons,
+                    vec![library_event_path(
+                        &meta_preview.r#type,
+                        &meta_preview.id,
+                        LibraryEventAction::LibraryAdd,
+                        None,
+                    )],
+                ),
+            };
+            let mut library_item = match prev_library_item {
                 Some(library_item) => LibraryItem::from((meta_preview, library_item)),
                 _ => LibraryItem::from((meta_preview, PhantomData::<E>)),
             };
@@ -53,10 +71,24 @@ pub fn update_library<E: Env + 'static>(
                 .join(Effects::msg(Msg::Event(Event::LibraryItemAdded {
                     id: meta_preview.id.to_owned(),
                 })))
+                .join(addon_events)
                 .unchanged()
         }
         Msg::Action(Action::Ctx(ActionCtx::RemoveFromLibrary(id))) => match library.items.get(id) {
             Some(library_item) => {
+                let addon_events = if library_item.removed {
+                    Effects::none().unchanged()
+                } else {
+                    addon_events_effects::<E>(
+                        &profile.addons,
+                        vec![library_event_path(
+                            &library_item.r#type,
+                            &library_item.id,
+                            LibraryEventAction::LibraryRemove,
+                            None,
+                        )],
+                    )
+                };
                 let mut library_item = library_item.to_owned();
                 library_item.removed = true;
                 library_item.temp = false;
@@ -74,6 +106,7 @@ pub fn update_library<E: Env + 'static>(
                     .join(Effects::msg(Msg::Event(Event::LibraryItemRemoved {
                         id: id.to_owned(),
                     })))
+                    .join(addon_events)
                     .unchanged()
             }
             _ => Effects::msg(Msg::Event(Event::Error {
@@ -86,6 +119,9 @@ pub fn update_library<E: Env + 'static>(
             Some(library_item) => {
                 let mut library_item = library_item.to_owned();
                 library_item.state.time_offset = 0;
+                if library_item.is_live() {
+                    library_item.state.last_watched = None;
+                }
 
                 Effects::msg(Msg::Internal(Internal::UpdateLibraryItem(library_item)))
                     .join(Effects::msg(Msg::Event(Event::LibraryItemRewinded {
@@ -146,8 +182,13 @@ pub fn update_library<E: Env + 'static>(
                 Some(library_item) if library_item.r#type != "series" => {
                     let mut library_item = library_item.to_owned();
                     library_item.mark_as_watched::<E>(*is_watched);
+                    let addon_events = addon_events_effects::<E>(
+                        &profile.addons,
+                        vec![item_watched_event_path(&library_item, *is_watched)],
+                    );
                     Effects::msg(Msg::Internal(Internal::UpdateLibraryItem(library_item)))
                         .unchanged()
+                        .join(addon_events)
                 }
                 // A series title cannot be safely marked from LibraryItem state alone because
                 // its canonical episode bitmap requires loaded metadata. Clients must use
@@ -170,7 +211,13 @@ pub fn update_library<E: Env + 'static>(
                 _ => return Effects::none().unchanged(),
             };
             library_item.mark_as_watched::<E>(*is_watched);
-            Effects::msg(Msg::Internal(Internal::UpdateLibraryItem(library_item))).unchanged()
+            let addon_events = addon_events_effects::<E>(
+                &profile.addons,
+                vec![item_watched_event_path(&library_item, *is_watched)],
+            );
+            Effects::msg(Msg::Internal(Internal::UpdateLibraryItem(library_item)))
+                .unchanged()
+                .join(addon_events)
         }
         Msg::Internal(Internal::UpdateLibraryItem(library_item))
             if library
