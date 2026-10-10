@@ -82,7 +82,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - uses: taiki-e/install-action@v2.87.15
+      - uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2 pinned; reviewed 2026-10-10
         with:
           tool: wasm-pack@${{ env.WASM_PACK_VERSION }}
 
@@ -157,7 +157,8 @@ jobs:
         run: mv ./*.tgz ./build/${{ github.ref_name }}/dev
         
       - name: Deploy gh-pages
-        if: ${{ ! startsWith(github.ref, 'refs/pull/')  &&  github.actor != 'dependabot[bot]' }}
+        # This review branch must validate Core and WebAssembly without publishing any package.
+        if: ${{ ! startsWith(github.ref, 'refs/pull/') && github.ref_name != 'integration/upstream-20261008' && github.actor != 'dependabot[bot]' }}
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}

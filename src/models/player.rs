@@ -11,8 +11,9 @@ use crate::constants::{
     VIDEO_HASH_EXTRA_PROP, VIDEO_SIZE_EXTRA_PROP, WATCHED_THRESHOLD_COEF,
 };
 use crate::models::common::{
-    eq_update, resource_update, resource_update_with_vector_content,
-    resources_update_with_vector_content, Loadable, ResourceAction, ResourceLoadable,
+    addon_events_effects, eq_update, player_event_path, resource_update,
+    resource_update_with_vector_content, resources_update_with_vector_content,
+    videos_watched_event_paths, Loadable, PlayerEventAction, ResourceAction, ResourceLoadable,
     ResourcesAction,
 };
 use crate::models::ctx::{Ctx, CtxError};
@@ -491,6 +492,12 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                                 .map(|request| &request.path.id)
                 });
                 let reconcile_season = self.marked_season_as_watched.is_some() && !same_video;
+                let stop_event_effects = player_event_effects::<E>(
+                    &ctx.profile.addons,
+                    self.selected.as_ref(),
+                    self.analytics_context.as_ref(),
+                    (self.loaded && !self.ended).then_some(PlayerEventAction::Stop),
+                );
                 // make sure we send the correct Trakt event if the model hasn't been unloaded
                 let trakt_event_effects = if self.selected.is_some() {
                     Effects::msg(Msg::Event(Event::TraktPaused {
@@ -689,6 +696,7 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                     self.marked_season_as_watched = None;
                 }
                 trakt_event_effects
+                    .join(stop_event_effects)
                     .join(item_state_update_effects)
                     .join(selected_effects)
                     .join(meta_item_effects)
@@ -719,6 +727,12 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                     Effects::none().unchanged()
                 };
 
+                let stop_event_effects = player_event_effects::<E>(
+                    &ctx.profile.addons,
+                    self.selected.as_ref(),
+                    self.analytics_context.as_ref(),
+                    (self.loaded && !self.ended).then_some(PlayerEventAction::Stop),
+                );
                 let ended_effects = if !self.ended && self.selected.is_some() {
                     Effects::msg(Msg::Event(Event::PlayerStopped {
                         context: self.analytics_context.as_ref().cloned().unwrap_or_default(),
@@ -788,6 +802,7 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                 self.marked_season_as_watched = None;
 
                 trakt_event_effects
+                    .join(stop_event_effects)
                     .join(seek_history_effects)
                     .join(item_state_update_effects)
                     .join(push_to_library_effects)
@@ -947,6 +962,17 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                         .unchanged(),
                         _ => Effects::none(),
                     };
+                    let player_event = match (self.loaded, self.paused) {
+                        (true, Some(true)) => Some(PlayerEventAction::Pause),
+                        (true, Some(false)) => Some(PlayerEventAction::Start),
+                        _ => None,
+                    };
+                    let player_event_effects = player_event_effects::<E>(
+                        &ctx.profile.addons,
+                        self.selected.as_ref(),
+                        self.analytics_context.as_ref(),
+                        player_event,
+                    );
 
                     let push_to_library_effects =
                         push_to_library::<E>(&mut self.push_library_item_time, library_item);
@@ -977,6 +1003,7 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                     );
 
                     trakt_event_effects
+                        .join(player_event_effects)
                         .join(push_to_library_effects)
                         .join(intro_outro_effects)
                         .join(external_skip_effects)
@@ -1142,6 +1169,19 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                 if self.selected.is_some() =>
             {
                 self.paused = Some(*paused);
+                let player_event = if !*paused {
+                    Some(PlayerEventAction::Start)
+                } else if self.loaded {
+                    Some(PlayerEventAction::Pause)
+                } else {
+                    None
+                };
+                let player_event_effects = player_event_effects::<E>(
+                    &ctx.profile.addons,
+                    self.selected.as_ref(),
+                    self.analytics_context.as_ref(),
+                    player_event,
+                );
                 let trakt_event_effects = if !self.loaded {
                     self.loaded = true;
                     Effects::msg(Msg::Event(Event::PlayerPlaying {
@@ -1172,7 +1212,9 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                     .unchanged(),
                     _ => Effects::none().unchanged(),
                 };
-                trakt_event_effects.join(update_library_item_effects)
+                trakt_event_effects
+                    .join(player_event_effects)
+                    .join(update_library_item_effects)
             }
             Msg::Action(Action::Player(ActionPlayer::NextVideo)) => {
                 let seek_history_effects = seek_update::<E>(
@@ -1216,6 +1258,12 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                     .join(library_item_effects)
             }
             Msg::Action(Action::Player(ActionPlayer::Ended)) if self.selected.is_some() => {
+                let stop_event_effects = player_event_effects::<E>(
+                    &ctx.profile.addons,
+                    self.selected.as_ref(),
+                    self.analytics_context.as_ref(),
+                    (self.loaded && !self.ended).then_some(PlayerEventAction::Stop),
+                );
                 self.ended = true;
 
                 // A genuine player Ended event is stronger completion evidence than seek distance.
@@ -1246,6 +1294,7 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                 }))
                 .join(completion_effects)
                 .unchanged()
+                .join(stop_event_effects)
             }
             Msg::Action(Action::Player(ActionPlayer::MarkVideoAsWatched(video, is_watched))) => {
                 match (&self.library_item, &self.watched) {
@@ -1265,8 +1314,18 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                         }
                         let mut library_item = library_item.to_owned();
                         library_item.mark_video_as_watched::<E>(watched, video, *is_watched);
+                        let addon_events = addon_events_effects::<E>(
+                            &ctx.profile.addons,
+                            videos_watched_event_paths(
+                                &library_item,
+                                watched,
+                                &[video],
+                                *is_watched,
+                            ),
+                        );
                         Effects::msg(Msg::Internal(Internal::UpdateLibraryItem(library_item)))
                             .unchanged()
+                            .join(addon_events)
                     }
                     _ => Effects::none().unchanged(),
                 }
@@ -1297,6 +1356,15 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                                         self.marked_video_as_watched = false;
                                     }
                                 }
+                                let addon_events = addon_events_effects::<E>(
+                                    &ctx.profile.addons,
+                                    videos_watched_event_paths(
+                                        library_item,
+                                        watched,
+                                        &videos,
+                                        *is_watched,
+                                    ),
+                                );
                                 let mut library_item = library_item.to_owned();
                                 library_item.mark_videos_as_watched::<E>(
                                     watched,
@@ -1308,6 +1376,7 @@ impl<E: Env + 'static> UpdateWithCtx<E> for Player {
                                     library_item,
                                 )))
                                 .unchanged()
+                                .join(addon_events)
                             }
                             None => Effects::none().unchanged(),
                         }
@@ -2819,6 +2888,34 @@ fn get_skip_gaps<E: Env + 'static>(skip_gaps_request: SkipGapsRequest) -> Effect
             .boxed_env(),
     )
     .into()
+}
+
+fn player_event_effects<E: Env + 'static>(
+    addons: &[Descriptor],
+    selected: Option<&Selected>,
+    analytics_context: Option<&AnalyticsContext>,
+    action: Option<PlayerEventAction>,
+) -> Effects {
+    match (
+        action,
+        selected.and_then(|selected| selected.stream_request.as_ref()),
+    ) {
+        (Some(action), Some(stream_request)) => addon_events_effects::<E>(
+            addons,
+            vec![player_event_path(
+                &stream_request.path.r#type,
+                &stream_request.path.id,
+                action,
+                analytics_context
+                    .and_then(|analytics_context| analytics_context.time)
+                    .unwrap_or_default(),
+                analytics_context
+                    .and_then(|analytics_context| analytics_context.duration)
+                    .unwrap_or_default(),
+            )],
+        ),
+        _ => Effects::none().unchanged(),
+    }
 }
 
 /// Sends watched state for meta item on every Watched state change of the library item

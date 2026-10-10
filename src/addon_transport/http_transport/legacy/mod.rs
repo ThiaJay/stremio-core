@@ -293,6 +293,36 @@ mod test {
     use super::*;
     use crate::types::addon::{ExtraExt, ResourcePath};
 
+    // The core-web dependency enables serde_json preserve_order when this is
+    // tested with the whole workspace. JSON-RPC object key order is not part of
+    // the legacy protocol; assert the exact URL target and decoded payload.
+    fn assert_legacy_request(actual: &str, expected: &str) {
+        let actual = Url::parse(actual).expect("actual legacy URL");
+        let expected = Url::parse(expected).expect("reference legacy URL");
+        assert_eq!(actual.scheme(), expected.scheme());
+        assert_eq!(actual.host_str(), expected.host_str());
+        assert_eq!(actual.port(), expected.port());
+        assert_eq!(actual.path(), expected.path());
+        assert_eq!(actual.fragment(), None);
+        let actual_query: Vec<_> = actual.query_pairs().collect();
+        let expected_query: Vec<_> = expected.query_pairs().collect();
+        assert_eq!(actual_query.len(), 1, "only legacy b query is allowed");
+        assert_eq!(expected_query.len(), 1);
+        assert_eq!(actual_query[0].0, "b");
+        assert_eq!(expected_query[0].0, "b");
+        let actual_bytes = BASE64
+            .decode(actual_query[0].1.as_bytes())
+            .expect("encoded RPC");
+        let expected_bytes = BASE64
+            .decode(expected_query[0].1.as_bytes())
+            .expect("reference RPC");
+        let actual_rpc: serde_json::Value =
+            serde_json::from_slice(&actual_bytes).expect("RPC JSON");
+        let expected_rpc: serde_json::Value =
+            serde_json::from_slice(&expected_bytes).expect("reference RPC JSON");
+        assert_eq!(actual_rpc, expected_rpc, "RPC fields and values must match");
+    }
+
     // Those are a bit sensitive for now, but that's a good thing, since it will force us
     // to pay attention to minor details that might matter with the legacy system
     // (e.g. omitting values vs `null` values)
@@ -301,7 +331,7 @@ mod test {
         let transport_url = Url::parse("https://stremio-mixer.schneider.ax/stremioget/stremio/v1")
             .expect("url parse failed");
         let path = ResourcePath::without_extra("catalog", "tv", "popularities.mixer");
-        assert_eq!(
+        assert_legacy_request(
             &build_legacy_req(&transport_url, &path).unwrap().uri().to_string(),
             "https://stremio-mixer.schneider.ax/stremioget/stremio/v1/q.json?b=eyJpZCI6MSwianNvbnJwYyI6IjIuMCIsIm1ldGhvZCI6Im1ldGEuZmluZCIsInBhcmFtcyI6W251bGwseyJsaW1pdCI6MTAwLCJxdWVyeSI6eyJ0eXBlIjoidHYifSwic2tpcCI6MCwic29ydCI6eyJwb3B1bGFyaXRpZXMubWl4ZXIiOi0xLCJwb3B1bGFyaXR5IjotMX19XX0=",
         );
@@ -312,7 +342,7 @@ mod test {
         let transport_url =
             Url::parse("https://legacywatchhub.strem.io/stremio/v1").expect("url parse failed");
         let path = ResourcePath::without_extra("stream", "series", "tt0386676:5:1");
-        assert_eq!(
+        assert_legacy_request(
             &build_legacy_req(&transport_url, &path).unwrap().uri().to_string(),
             "https://legacywatchhub.strem.io/stremio/v1/q.json?b=eyJpZCI6MSwianNvbnJwYyI6IjIuMCIsIm1ldGhvZCI6InN0cmVhbS5maW5kIiwicGFyYW1zIjpbbnVsbCx7InF1ZXJ5Ijp7ImVwaXNvZGUiOjEsImltZGJfaWQiOiJ0dDAzODY2NzYiLCJzZWFzb24iOjUsInR5cGUiOiJzZXJpZXMifX1dfQ=="
         );
@@ -323,7 +353,7 @@ mod test {
         let transport_url =
             Url::parse("https://legacywatchhub.strem.io/stremio/v1").expect("url parse failed");
         let path = ResourcePath::without_extra("subtitles", "series", "tt0386676:5:1");
-        assert_eq!(
+        assert_legacy_request(
             &build_legacy_req(&transport_url, &path).unwrap().uri().to_string(),
             "https://legacywatchhub.strem.io/stremio/v1/q.json?b=eyJpZCI6MSwianNvbnJwYyI6IjIuMCIsIm1ldGhvZCI6InN1YnRpdGxlcy5maW5kIiwicGFyYW1zIjpbbnVsbCx7InF1ZXJ5Ijp7Iml0ZW1IYXNoIjoidHQwMzg2Njc2IDUgMSJ9fV19"
         );
@@ -337,7 +367,7 @@ mod test {
             .extend_one(&VIDEO_HASH_EXTRA_PROP, Some("ffffffffff".to_string()))
             .extend_one(&VIDEO_SIZE_EXTRA_PROP, Some("1000000000".to_string()));
         let path = ResourcePath::with_extra("subtitles", "series", "tt0386676:5:1", extra);
-        assert_eq!(
+        assert_legacy_request(
             &build_legacy_req(&transport_url, &path).unwrap().uri().to_string(),
             "https://legacywatchhub.strem.io/stremio/v1/q.json?b=eyJpZCI6MSwianNvbnJwYyI6IjIuMCIsIm1ldGhvZCI6InN1YnRpdGxlcy5maW5kIiwicGFyYW1zIjpbbnVsbCx7InF1ZXJ5Ijp7Iml0ZW1IYXNoIjoidHQwMzg2Njc2IDUgMSIsInZpZGVvSGFzaCI6ImZmZmZmZmZmZmYiLCJ2aWRlb1NpemUiOjEwMDAwMDAwMDB9fV19"
         );

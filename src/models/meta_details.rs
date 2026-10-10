@@ -14,7 +14,8 @@ use crate::{
     },
     models::{
         common::{
-            eq_update, resource_update, resources_update, resources_update_with_vector_content,
+            addon_events_effects, eq_update, item_watched_event_path, resource_update,
+            resources_update, resources_update_with_vector_content, videos_watched_event_paths,
             Loadable, ResourceAction, ResourceLoadable, ResourcesAction,
         },
         ctx::{Ctx, CtxError},
@@ -190,8 +191,13 @@ impl<E: Env + 'static> UpdateWithCtx<E> for MetaDetails {
                             library_item.mark_as_watched::<E>(*is_watched);
                         }
 
+                        let addon_events = addon_events_effects::<E>(
+                            &ctx.profile.addons,
+                            vec![item_watched_event_path(&library_item, *is_watched)],
+                        );
                         Effects::msg(Msg::Internal(Internal::UpdateLibraryItem(library_item)))
                             .unchanged()
+                            .join(addon_events)
                     }
                     _ => Effects::none().unchanged(),
                 }
@@ -218,8 +224,13 @@ impl<E: Env + 'static> UpdateWithCtx<E> for MetaDetails {
                             library_item.state.time_offset = 0;
                         }
                     }
+                    let addon_events = addon_events_effects::<E>(
+                        &ctx.profile.addons,
+                        videos_watched_event_paths(&library_item, watched, &[video], *is_watched),
+                    );
                     Effects::msg(Msg::Internal(Internal::UpdateLibraryItem(library_item)))
                         .unchanged()
+                        .join(addon_events)
                 }
                 _ => Effects::none().unchanged(),
             },
@@ -239,6 +250,15 @@ impl<E: Env + 'static> UpdateWithCtx<E> for MetaDetails {
                     match meta_item {
                         Some(meta_item) => {
                             let videos = meta_item.videos_by_season(*season);
+                            let addon_events = addon_events_effects::<E>(
+                                &ctx.profile.addons,
+                                videos_watched_event_paths(
+                                    library_item,
+                                    watched,
+                                    &videos,
+                                    *is_watched,
+                                ),
+                            );
                             let mut library_item = library_item.to_owned();
                             let watched = library_item.mark_videos_as_watched::<E>(
                                 watched,
@@ -256,6 +276,7 @@ impl<E: Env + 'static> UpdateWithCtx<E> for MetaDetails {
 
                             Effects::msg(Msg::Internal(Internal::UpdateLibraryItem(library_item)))
                                 .unchanged()
+                                .join(addon_events)
                         }
                         None => Effects::none().unchanged(),
                     }
