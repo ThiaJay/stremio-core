@@ -1023,12 +1023,15 @@ mod test {
                     .expect("Should have the schema set"),
                 "Scheme version should now be updated"
             );
-            assert_eq!(
-                &migrated_profile.to_string(),
+            let stored_profile: serde_json::Value = serde_json::from_str(
                 storage
                     .get(PROFILE_STORAGE_KEY)
                     .expect("Should have the profile set"),
-                "Profile should match"
+            )
+            .expect("Migrated profile should be valid JSON");
+            assert_eq!(
+                migrated_profile, stored_profile,
+                "Profile fields and values should match regardless of JSON key order"
             );
         }
 
@@ -1066,12 +1069,15 @@ mod test {
                     .expect("Should have the schema set"),
                 "Scheme version should now be updated"
             );
-            assert_eq!(
-                &migrated_profile.to_string(),
+            let stored_profile: serde_json::Value = serde_json::from_str(
                 storage
                     .get(PROFILE_STORAGE_KEY)
                     .expect("Should have the profile set"),
-                "Profile should match"
+            )
+            .expect("Migrated profile should be valid JSON");
+            assert_eq!(
+                migrated_profile, stored_profile,
+                "Profile fields and values should match regardless of JSON key order"
             );
         }
 
@@ -1107,12 +1113,15 @@ mod test {
                     .expect("Should have the schema set"),
                 "Scheme version should now be updated"
             );
-            assert_eq!(
-                &migrated_profile.to_string(),
+            let stored_profile: serde_json::Value = serde_json::from_str(
                 storage
                     .get(PROFILE_STORAGE_KEY)
                     .expect("Should have the profile set"),
-                "Profile should match"
+            )
+            .expect("Migrated profile should be valid JSON");
+            assert_eq!(
+                migrated_profile, stored_profile,
+                "Profile fields and values should match regardless of JSON key order"
             );
         }
     }
@@ -1150,12 +1159,15 @@ mod test {
                     .expect("Should have the schema set"),
                 "Scheme version should now be updated"
             );
-            assert_eq!(
-                &migrated_profile.to_string(),
+            let stored_profile: serde_json::Value = serde_json::from_str(
                 storage
                     .get(PROFILE_STORAGE_KEY)
                     .expect("Should have the profile set"),
-                "Profile should match"
+            )
+            .expect("Migrated profile should be valid JSON");
+            assert_eq!(
+                migrated_profile, stored_profile,
+                "Profile fields and values should match regardless of JSON key order"
             );
         }
 
@@ -1189,12 +1201,15 @@ mod test {
                     .expect("Should have the schema set"),
                 "Scheme version should now be updated"
             );
-            assert_eq!(
-                &migrated_profile.to_string(),
+            let stored_profile: serde_json::Value = serde_json::from_str(
                 storage
                     .get(PROFILE_STORAGE_KEY)
                     .expect("Should have the profile set"),
-                "Profile should match"
+            )
+            .expect("Migrated profile should be valid JSON");
+            assert_eq!(
+                migrated_profile, stored_profile,
+                "Profile fields and values should match regardless of JSON key order"
             );
         }
     }
@@ -1273,12 +1288,15 @@ mod test {
                     .expect("Should have the schema set"),
                 "Scheme version should now be updated"
             );
-            assert_eq!(
-                &migrated_profile.to_string(),
+            let stored_profile: serde_json::Value = serde_json::from_str(
                 storage
                     .get(PROFILE_STORAGE_KEY)
                     .expect("Should have the profile set"),
-                "Profile should match"
+            )
+            .expect("Migrated profile should be valid JSON");
+            assert_eq!(
+                migrated_profile, stored_profile,
+                "Profile fields and values should match regardless of JSON key order"
             );
         }
     }
@@ -1327,12 +1345,15 @@ mod test {
                     .expect("Should have the schema set"),
                 "Scheme version should now be updated"
             );
-            assert_eq!(
-                &migrated_profile.to_string(),
+            let stored_profile: serde_json::Value = serde_json::from_str(
                 storage
                     .get(PROFILE_STORAGE_KEY)
                     .expect("Should have the profile set"),
-                "Profile should match"
+            )
+            .expect("Migrated profile should be valid JSON");
+            assert_eq!(
+                migrated_profile, stored_profile,
+                "Profile fields and values should match regardless of JSON key order"
             );
         }
     }
@@ -1377,12 +1398,15 @@ mod test {
                     .expect("Should have the schema set"),
                 "Scheme version should now be updated"
             );
-            assert_eq!(
-                &migrated_profile.to_string(),
+            let stored_profile: serde_json::Value = serde_json::from_str(
                 storage
                     .get(PROFILE_STORAGE_KEY)
                     .expect("Should have the profile set"),
-                "Profile should match"
+            )
+            .expect("Migrated profile should be valid JSON");
+            assert_eq!(
+                migrated_profile, stored_profile,
+                "Profile fields and values should match regardless of JSON key order"
             );
         }
     }
@@ -1508,12 +1532,15 @@ mod test {
                     .expect("Should have the schema set"),
                 "Scheme version should now be updated"
             );
-            assert_eq!(
-                &migrated_profile.to_string(),
+            let stored_profile: serde_json::Value = serde_json::from_str(
                 storage
                     .get(PROFILE_STORAGE_KEY)
                     .expect("Should have the profile set"),
-                "Profile should match"
+            )
+            .expect("Migrated profile should be valid JSON");
+            assert_eq!(
+                migrated_profile, stored_profile,
+                "Profile fields and values should match regardless of JSON key order"
             );
         }
     }
@@ -1549,12 +1576,15 @@ mod test {
                     .expect("Should have the schema set"),
                 "Scheme version should now be updated"
             );
-            assert_eq!(
-                &migrated_profile.to_string(),
+            let stored_profile: serde_json::Value = serde_json::from_str(
                 storage
                     .get(PROFILE_STORAGE_KEY)
                     .expect("Should have the profile set"),
-                "Profile should match"
+            )
+            .expect("Migrated profile should be valid JSON");
+            assert_eq!(
+                migrated_profile, stored_profile,
+                "Profile fields and values should match regardless of JSON key order"
             );
         }
     }
@@ -1590,12 +1620,15 @@ mod test {
                     .expect("Should have the schema set"),
                 "Scheme version should now be updated"
             );
-            assert_eq!(
-                &migrated_profile.to_string(),
+            let stored_profile: serde_json::Value = serde_json::from_str(
                 storage
                     .get(PROFILE_STORAGE_KEY)
                     .expect("Should have the profile set"),
-                "Profile should match"
+            )
+            .expect("Migrated profile should be valid JSON");
+            assert_eq!(
+                migrated_profile, stored_profile,
+                "Profile fields and values should match regardless of JSON key order"
             );
         }
     }
@@ -1631,12 +1664,15 @@ mod test {
                     .expect("Should have the schema set"),
                 "Scheme version should now be updated"
             );
-            assert_eq!(
-                &migrated_profile.to_string(),
+            let stored_profile: serde_json::Value = serde_json::from_str(
                 storage
                     .get(PROFILE_STORAGE_KEY)
                     .expect("Should have the profile set"),
-                "Profile should match"
+            )
+            .expect("Migrated profile should be valid JSON");
+            assert_eq!(
+                migrated_profile, stored_profile,
+                "Profile fields and values should match regardless of JSON key order"
             );
         }
     }
@@ -1672,12 +1708,15 @@ mod test {
                     .expect("Should have the schema set"),
                 "Scheme version should now be updated"
             );
-            assert_eq!(
-                &migrated_profile.to_string(),
+            let stored_profile: serde_json::Value = serde_json::from_str(
                 storage
                     .get(PROFILE_STORAGE_KEY)
                     .expect("Should have the profile set"),
-                "Profile should match"
+            )
+            .expect("Migrated profile should be valid JSON");
+            assert_eq!(
+                migrated_profile, stored_profile,
+                "Profile fields and values should match regardless of JSON key order"
             );
         }
     }
@@ -1713,12 +1752,15 @@ mod test {
                     .expect("Should have the schema set"),
                 "Scheme version should now be updated"
             );
-            assert_eq!(
-                &migrated_profile.to_string(),
+            let stored_profile: serde_json::Value = serde_json::from_str(
                 storage
                     .get(PROFILE_STORAGE_KEY)
                     .expect("Should have the profile set"),
-                "Profile should match"
+            )
+            .expect("Migrated profile should be valid JSON");
+            assert_eq!(
+                migrated_profile, stored_profile,
+                "Profile fields and values should match regardless of JSON key order"
             );
         }
     }
@@ -1754,12 +1796,15 @@ mod test {
                     .expect("Should have the schema set"),
                 "Scheme version should now be updated"
             );
-            assert_eq!(
-                &migrated_profile.to_string(),
+            let stored_profile: serde_json::Value = serde_json::from_str(
                 storage
                     .get(PROFILE_STORAGE_KEY)
                     .expect("Should have the profile set"),
-                "Profile should match"
+            )
+            .expect("Migrated profile should be valid JSON");
+            assert_eq!(
+                migrated_profile, stored_profile,
+                "Profile fields and values should match regardless of JSON key order"
             );
         }
     }
@@ -1795,12 +1840,15 @@ mod test {
                     .expect("Should have the schema set"),
                 "Scheme version should now be updated"
             );
-            assert_eq!(
-                &migrated_profile.to_string(),
+            let stored_profile: serde_json::Value = serde_json::from_str(
                 storage
                     .get(PROFILE_STORAGE_KEY)
                     .expect("Should have the profile set"),
-                "Profile should match"
+            )
+            .expect("Migrated profile should be valid JSON");
+            assert_eq!(
+                migrated_profile, stored_profile,
+                "Profile fields and values should match regardless of JSON key order"
             );
         }
     }
@@ -1836,12 +1884,15 @@ mod test {
                     .expect("Should have the schema set"),
                 "Scheme version should now be updated"
             );
-            assert_eq!(
-                &migrated_profile.to_string(),
+            let stored_profile: serde_json::Value = serde_json::from_str(
                 storage
                     .get(PROFILE_STORAGE_KEY)
                     .expect("Should have the profile set"),
-                "Profile should match"
+            )
+            .expect("Migrated profile should be valid JSON");
+            assert_eq!(
+                migrated_profile, stored_profile,
+                "Profile fields and values should match regardless of JSON key order"
             );
         }
     }
