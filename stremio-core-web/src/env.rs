@@ -104,6 +104,18 @@ impl WebEnv {
             })
             .boxed_local()
     }
+
+    /// Sets the in-memory analytics consent selected explicitly by the client.
+    /// Consent is disabled on every fresh runtime and is never inferred from
+    /// authentication, profile hydration or another preference.
+    pub fn set_analytics_consent(consented: bool) {
+        ANALYTICS.set_consent(consented);
+    }
+
+    pub fn has_analytics_consent() -> bool {
+        ANALYTICS.has_consent()
+    }
+
     pub fn get_location_hash() -> EnvFuture<'static, String> {
         get_location_hash()
             .map(|location_hash| {
