@@ -303,6 +303,18 @@ fn dispatch_internal(
     Ok(())
 }
 
+/// Enables analytics only from an explicit client choice. Authentication,
+/// hydrated profile state and unrelated settings never grant consent.
+#[wasm_bindgen]
+pub fn set_analytics_consent(consented: bool) {
+    WebEnv::set_analytics_consent(consented);
+}
+
+#[wasm_bindgen]
+pub fn get_analytics_consent() -> bool {
+    WebEnv::has_analytics_consent()
+}
+
 #[wasm_bindgen]
 pub fn analytics(event: JsValue, location_hash: JsValue) {
     let event =
