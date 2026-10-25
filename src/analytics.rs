@@ -46,20 +46,32 @@ struct EventsBatch {
 
 #[derive(Default)]
 struct State {
+    consented: bool,
     number: u64,
     queue: VecDeque<EventsBatch>,
     pending: Option<EventsBatch>,
 }
 
 impl State {
+    fn set_consent(&mut self, consented: bool) {
+        self.consented = consented;
+        if !consented {
+            self.number = 0;
+            self.queue.clear();
+            self.pending = None;
+        }
+    }
     fn next_number(&mut self) -> u64 {
         self.number = self.number.wrapping_add(1);
         self.number
     }
     fn pop_batch(&mut self) -> Option<EventsBatch> {
-        self.queue.pop_front()
+        self.consented.then(|| self.queue.pop_front()).flatten()
     }
     fn push_event(&mut self, event: Event, auth_key: AuthKey) {
+        if !self.consented {
+            return;
+        }
         match self.queue.back_mut() {
             Some(batch) if batch.auth_key == auth_key => {
                 batch.events.push(event);
@@ -85,6 +97,20 @@ pub struct Analytics<E: Env> {
 }
 
 impl<E: Env + 'static> Analytics<E> {
+    /// Enables analytics only after an explicit client opt-in. Revocation is
+    /// fail-closed: queued and pending events are discarded without sending.
+    pub fn set_consent(&self, consented: bool) {
+        self.state
+            .lock()
+            .expect("analytics state lock failed")
+            .set_consent(consented);
+    }
+    pub fn has_consent(&self) -> bool {
+        self.state
+            .lock()
+            .expect("analytics state lock failed")
+            .consented
+    }
     pub fn emit(
         &self,
         name: String,
@@ -94,6 +120,9 @@ impl<E: Env + 'static> Analytics<E> {
         path: &str,
     ) {
         let mut state = self.state.lock().expect("analytics state lock failed");
+        if !state.consented {
+            return;
+        }
         let auth_key = match ctx.profile.auth_key() {
             Some(auth_key) => auth_key.to_owned(),
             _ => return,
@@ -109,6 +138,9 @@ impl<E: Env + 'static> Analytics<E> {
     }
     pub fn send_next_batch(&self) -> impl Future<Output = ()> {
         let mut state = self.state.lock().expect("analytics state lock failed");
+        if !state.consented {
+            return Either::Right(future::ready(()));
+        }
         if state.pending.is_none() {
             let batch = state.pop_batch();
             if let Some(batch) = batch {
@@ -140,6 +172,9 @@ impl<E: Env + 'static> Analytics<E> {
     }
     pub fn flush(&self) -> impl Future<Output = ()> {
         let mut state = self.state.lock().expect("analytics state lock failed");
+        if !state.consented {
+            state.queue.clear();
+        }
         state.pending = None;
         future::join_all(
             state
@@ -168,4 +203,81 @@ fn send_events_batch_to_api<E: Env>(
             .map(|value| serde_json::to_value(value).unwrap())
             .collect(),
     })
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn event(number: u64) -> Event {
+        Event {
+            data: serde_json::json!({ "test": true }),
+            name: "test".to_owned(),
+            time: 1,
+            number,
+            context: serde_json::json!({ "context": "test" }),
+        }
+    }
+
+    fn batch(number: u64) -> EventsBatch {
+        EventsBatch {
+            auth_key: AuthKey("test-auth-key".to_owned()),
+            events: vec![event(number)],
+        }
+    }
+
+    #[test]
+    fn analytics_consent_is_disabled_by_default() {
+        let mut state = State::default();
+
+        state.push_event(event(1), AuthKey("test-auth-key".to_owned()));
+
+        assert!(!state.consented);
+        assert!(state.queue.is_empty());
+        assert!(state.pop_batch().is_none());
+    }
+
+    #[test]
+    fn explicit_consent_allows_queueing() {
+        let mut state = State::default();
+        state.set_consent(true);
+
+        state.push_event(event(1), AuthKey("test-auth-key".to_owned()));
+
+        assert!(state.consented);
+        assert_eq!(state.queue.len(), 1);
+        assert_eq!(state.pop_batch(), Some(batch(1)));
+    }
+
+    #[test]
+    fn revoking_consent_discards_queued_and_pending_events() {
+        let mut state = State::default();
+        state.set_consent(true);
+        state.number = 9;
+        state.queue.push_back(batch(9));
+        state.pending = Some(batch(10));
+
+        state.set_consent(false);
+
+        assert!(!state.consented);
+        assert_eq!(state.number, 0);
+        assert!(state.queue.is_empty());
+        assert!(state.pending.is_none());
+    }
+
+    #[test]
+    fn reconsent_does_not_restore_discarded_events() {
+        let mut state = State::default();
+        state.set_consent(true);
+        state.queue.push_back(batch(1));
+        state.pending = Some(batch(2));
+        state.set_consent(false);
+
+        state.set_consent(true);
+
+        assert!(state.consented);
+        assert!(state.queue.is_empty());
+        assert!(state.pending.is_none());
+    }
 }
