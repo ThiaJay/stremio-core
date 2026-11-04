@@ -157,8 +157,9 @@ jobs:
         run: mv ./*.tgz ./build/${{ github.ref_name }}/dev
         
       - name: Deploy gh-pages
-        # This review branch must validate Core and WebAssembly without publishing any package.
-        if: ${{ ! startsWith(github.ref, 'refs/pull/') && github.ref_name != 'integration/upstream-20261008' && github.actor != 'dependabot[bot]' }}
+        # Source-only review branches must validate Core and WebAssembly without
+        # publishing any package.
+        if: ${{ ! startsWith(github.ref, 'refs/pull/') && github.ref_name != 'integration/upstream-20261008' && github.ref_name != 'fix/analytics-explicit-consent-20261025-v1' && github.actor != 'dependabot[bot]' }}
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
