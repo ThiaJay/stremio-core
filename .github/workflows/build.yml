@@ -11,9 +11,8 @@ on:
       - '**'
     tags-ignore:
       - '**'
+  # Validate stacked source-review PRs as well as PRs targeting development.
   pull_request:
-    branches:
-      - development
 
 # Stops the running workflow of previous pushes
 concurrency:
@@ -22,6 +21,90 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  source-review-core:
+    # Same-repository pull requests need a read-only lane: API-created commits do
+    # not reliably produce the push run assumed by the publishing jobs below.
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+    name: "source review: Core lint, test and build"
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout exact pull request source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Rust setup (1.85)
+        uses: dtolnay/rust-toolchain@ccc8c1f930153b792217f06c65a38f23a882993a # 1.85 branch
+        with:
+          toolchain: '1.85'
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      - name: Lint - rustfmt
+        run: cargo fmt --all -- --check
+
+      - name: Lint - clippy
+        run: cargo clippy --all --no-deps -- -D warnings
+
+      - name: Test
+        run: cargo test
+
+      - name: Build
+        run: cargo build
+
+  source-review-web:
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+    name: "source review: WebAssembly test and build"
+    permissions:
+      contents: read
+    needs: source-review-core
+    runs-on: ubuntu-latest
+    env:
+      NODE_VERSION: 12
+      WASM_PACK_VERSION: 0.14.0
+      RUST_VERSION: '1.95'
+
+    steps:
+      - name: Checkout exact pull request source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Rust setup
+        uses: dtolnay/rust-toolchain@ccc8c1f930153b792217f06c65a38f23a882993a # immutable action source
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: rust-std
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      - uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2 pinned; reviewed 2026-10-10
+        with:
+          tool: wasm-pack@${{ env.WASM_PACK_VERSION }}
+
+      - name: Setup chromedriver
+        uses: nanasess/setup-chromedriver@e913548694400f275b4070efcd90f47dbbc8914c # v3.0.0
+
+      - name: Run wasm tests (Chrome)
+        working-directory: stremio-core-web
+        run: wasm-pack test --chromedriver "$(which chromedriver)" --chrome --headless
+
+      - name: Setup NodeJS
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: stremio-core-web/package-lock.json
+
+      - name: Install NPM dependencies
+        working-directory: stremio-core-web
+        run: npm ci
+
+      - name: Build (dev)
+        working-directory: stremio-core-web
+        run: npm run build-dev
+
   build-core:
     # Same-repository branches are checked on push so they can publish a testing package.
     # Pull request runs are only needed for forks, whose pushes do not run here.
@@ -157,8 +240,9 @@ jobs:
         run: mv ./*.tgz ./build/${{ github.ref_name }}/dev
         
       - name: Deploy gh-pages
-        # This review branch must validate Core and WebAssembly without publishing any package.
-        if: ${{ ! startsWith(github.ref, 'refs/pull/') && github.ref_name != 'integration/upstream-20261008' && github.actor != 'dependabot[bot]' }}
+        # Source-only review branches must validate Core and WebAssembly without
+        # publishing any package.
+        if: ${{ ! startsWith(github.ref, 'refs/pull/') && github.ref_name != 'integration/upstream-20261008' && github.ref_name != 'fix/analytics-explicit-consent-20261025-v1' && github.actor != 'dependabot[bot]' }}
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
