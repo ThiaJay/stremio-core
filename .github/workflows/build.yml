@@ -158,7 +158,7 @@ jobs:
         
       - name: Deploy gh-pages
         # This review branch must validate Core and WebAssembly without publishing any package.
-        if: ${{ ! startsWith(github.ref, 'refs/pull/') && github.ref_name != 'integration/upstream-20261008' && github.actor != 'dependabot[bot]' }}
+        if: ${{ ! startsWith(github.ref, 'refs/pull/') && github.ref_name != 'integration/upstream-20261008' && github.ref_name != 'fix/msrv-rust177-option-compat-20261117' && github.actor != 'dependabot[bot]' }}
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
