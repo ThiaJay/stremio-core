@@ -217,7 +217,7 @@ impl Controller {
             || sample
                 .offset_ms
                 .checked_abs()
-                .is_none_or(|offset| offset > 60_000)
+                .map_or(true, |offset| offset > 60_000)
             || !self.accept_time(now)
         {
             return;
